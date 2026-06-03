@@ -1,888 +1,900 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, FileSpreadsheet, UploadCloud, TableProperties, RefreshCw, Save, Download, Upload, MousePointerClick, ChevronRight } from 'lucide-react';
-
-// --- HẰNG SỐ & MÀU SẮC ---
-const PRIORITIES = {
-  HARD: { id: 'HARD', label: '1. Đáy', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-500' },
-  SOFT: { id: 'SOFT', label: '2. Giữa', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-500' },
-  NORMAL: { id: 'NORMAL', label: '3. Nóc', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-500' }
-};
-
-const BATCH_COLORS = [
-  { main: '#3B82F6', top: '#60A5FA', right: '#2563EB', text: 'text-white' }, 
-  { main: '#EF4444', top: '#F87171', right: '#DC2828', text: 'text-white' }, 
-  { main: '#10B981', top: '#34D399', right: '#059669', text: 'text-white' }, 
-  { main: '#F59E0B', top: '#FBBF24', right: '#D97706', text: 'text-white' }, 
-  { main: '#8B5CF6', top: '#A78BFA', right: '#7C3AED', text: 'text-white' }, 
-  { main: '#EC4899', top: '#F472B6', right: '#DB2777', text: 'text-white' }, 
-  { main: '#14B8A6', top: '#2DD4BF', right: '#0D9488', text: 'text-white' }, 
-];
-
-const CATEGORIES = ['Đạn thẳng', 'Đạn cối', 'Vật liệu nổ', 'Khác'];
-
-// Key lưu trữ LocalStorage
-const STORAGE_KEY = 'wms_smartpacking_data_v14';
-
-export default function SmartPackingApp() {
-  // --- STATE KHỞI TẠO (Load từ LocalStorage nếu có) ---
-  const [activeTab, setActiveTab] = useState('batches');
-  const [viewMode, setViewMode] = useState('3D');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>WMS Smart Packing V14</title>
   
-  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
-  const [editingBatch, setEditingBatch] = useState(null);
-  
-  // Trạng thái Click/Hover để xem chi tiết trên sơ đồ
-  const [hoveredBatchId, setHoveredBatchId] = useState(null);
-  const [selectedBatch, setSelectedBatch] = useState(null);
+  <script src="https://cdn.tailwindcss.com"></script>
 
-  // Cấu hình không gian
-  const [config, setConfig] = useState({
-    rows: 4, cols: 6, maxHeight: 10, defaultItemsPerBox: 2,
-    isManualRouting: false, fillAxis: 'col', fillDirection: 'ltr', isSnakeRouting: true
-  });
-  const [autoChosenConfig, setAutoChosenConfig] = useState(null);
-
-  // Danh sách lô mặc định có Category
-  const [batches, setBatches] = useState([
-    { id: 'L01', name: 'Đạn CX57', category: 'Đạn thẳng', totalItems: 48, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 0 },
-    { id: 'L02', name: 'Đạn C60', category: 'Đạn cối', totalItems: 36, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 1 },
-    { id: 'L03', name: 'Đạn L X', category: 'Vật liệu nổ', totalItems: 15, itemsPerBox: 2, unit: 'thân', priority: 'NORMAL', colorIdx: 2 },
-  ]);
-
-  const [grid, setGrid] = useState([]);
-  const [overflowBoxes, setOverflowBoxes] = useState([]);
-  const [isPacked, setIsPacked] = useState(false);
-
-  // --- LOCAL STORAGE & BACKUP ---
-  useEffect(() => {
-    // Chỉ chạy lần đầu khi mount
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData);
-        if (parsed.config) setConfig(parsed.config);
-        if (parsed.batches) setBatches(parsed.batches);
-      } catch (e) { console.error("Lỗi đọc dữ liệu lưu trữ", e); }
-    }
-    
-    // Tải thư viện Excel ngầm
-    if (typeof window !== 'undefined' && !window.XLSX) {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      script.async = true;
-      document.head.appendChild(script);
-    }
-  }, []);
-
-  // Lưu tự động mỗi khi Batches hoặc Config thay đổi
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ config, batches }));
-  }, [config, batches]);
-
-  // Handle Resize & Swipe Gestures cho iPhone
-  const touchStartX = useRef(null);
-  
-  useEffect(() => {
-    const handleResize = () => setIsSidebarOpen(window.innerWidth >= 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
-  const handleTouchEnd = (e) => {
-    if (touchStartX.current === null) return;
-    const touchEndX = e.changedTouches[0].clientX;
-    const diff = touchStartX.current - touchEndX;
-    if (diff > 50 && isSidebarOpen) setIsSidebarOpen(false); // Vuốt trái -> Đóng
-    if (diff < -50 && !isSidebarOpen && touchStartX.current < 30) setIsSidebarOpen(true); // Vuốt phải từ mép -> Mở
-    touchStartX.current = null;
-  };
-
-  // --- THUẬT TOÁN ĐIỀU PHỐI (CÓ XỬ LÝ CATEGORY) ---
-  const generateRoute = (rows, cols, axis, direction, isSnake) => {
-    const route = [];
-    if (axis === 'col') {
-      const cList = [];
-      for (let c = 0; c < cols; c++) cList.push(direction === 'ltr' ? c : cols - 1 - c);
-      cList.forEach((c, index) => {
-        const topToBottom = isSnake ? (index % 2 === 0) : true;
-        if (topToBottom) for (let r = 0; r < rows; r++) route.push({r, c});
-        else for (let r = rows - 1; r >= 0; r--) route.push({r, c});
-      });
-    } else {
-      const rList = [];
-      for (let r = 0; r < rows; r++) rList.push(r);
-      rList.forEach((r, index) => {
-        const leftToRight = isSnake ? (index % 2 === 0) : true;
-        const actualLTR = direction === 'ltr' ? leftToRight : !leftToRight;
-        if (actualLTR) for (let c = 0; c < cols; c++) route.push({r, c});
-        else for (let c = cols - 1; c >= 0; c--) route.push({r, c});
-      });
-    }
-    return route;
-  };
-
-  const simulatePacking = (axis, direction, isSnake, allBoxesToPack) => {
-    const tempGrid = Array(config.rows).fill(null).map(() => Array(config.cols).fill(null).map(() => ({ stack: [] })));
-    const tempOverflow = [];
-    const route = generateRoute(config.rows, config.cols, axis, direction, isSnake);
-    let routeIdx = 0;
-
-    allBoxesToPack.forEach(box => {
-      let placed = false;
-      while (routeIdx < route.length) {
-        const {r, c} = route[routeIdx];
-        if (tempGrid[r][c].stack.length < config.maxHeight) {
-          tempGrid[r][c].stack.push(box);
-          placed = true;
-          break; 
-        } else {
-          routeIdx++; 
-        }
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0"
       }
-      if (!placed) tempOverflow.push(box);
-    });
-    return { grid: tempGrid, overflow: tempOverflow };
-  };
-
-  const runSmartPacking = () => {
-    let allBoxes = [];
-    batches.forEach(batch => {
-      const perBox = batch.itemsPerBox || config.defaultItemsPerBox;
-      const fullBoxesCount = Math.floor(batch.totalItems / perBox);
-      const partialItems = batch.totalItems % perBox;
-      
-      const batchBoxes = Array(fullBoxesCount).fill({ ...batch, count: perBox, isPartial: false });
-      if (partialItems > 0) batchBoxes.push({ ...batch, count: partialItems, isPartial: true });
-      batchBoxes.forEach(box => allBoxes.push(box));
-    });
-
-    // LUẬT SORTING MỚI: 1. Category -> 2. Priority -> 3. User Order
-    // Đảm bảo các Lô cùng Loại luôn đi liền nhau, dập tắt nguy cơ Xen Lô (Sandwiching)
-    const priorityWeight = { 'HARD': 3, 'SOFT': 2, 'NORMAL': 1 };
-    const orderedBatchIds = batches.map(b => b.id);
-    const orderedCategories = [...new Set(batches.map(b => b.category))];
-
-    allBoxes.sort((a, b) => {
-      const catA = orderedCategories.indexOf(a.category);
-      const catB = orderedCategories.indexOf(b.category);
-      if (catA !== catB) return catA - catB; // Gom nhóm theo Loại
-
-      if (priorityWeight[a.priority] !== priorityWeight[b.priority]) {
-        return priorityWeight[b.priority] - priorityWeight[a.priority]; // Gom theo Ưu tiên
-      }
-      return orderedBatchIds.indexOf(a.id) - orderedBatchIds.indexOf(b.id); // Cuối cùng theo thứ tự tay kéo
-    });
-
-    let finalGrid, finalOverflow;
-
-    if (config.isManualRouting) {
-      const result = simulatePacking(config.fillAxis, config.fillDirection, config.isSnakeRouting, allBoxes);
-      finalGrid = result.grid;
-      finalOverflow = result.overflow;
-      setAutoChosenConfig(null);
-    } else {
-      const scenarios = [
-        { axis: 'col', dir: 'ltr', snake: false, label: 'Cột Dọc (Trái qua)' },
-        { axis: 'col', dir: 'rtl', snake: false, label: 'Cột Dọc (Phải qua)' },
-        { axis: 'row', dir: 'ltr', snake: false, label: 'Ngang (Trái qua)' },
-        { axis: 'row', dir: 'rtl', snake: false, label: 'Ngang (Phải qua)' },
-        { axis: 'col', dir: 'ltr', snake: true, label: 'Cột Dọc (Trái qua) + Ziczac' },
-        { axis: 'col', dir: 'rtl', snake: true, label: 'Cột Dọc (Phải qua) + Ziczac' },
-        { axis: 'row', dir: 'ltr', snake: true, label: 'Ngang (Trái qua) + Ziczac' },
-        { axis: 'row', dir: 'rtl', snake: true, label: 'Ngang (Phải qua) + Ziczac' }
-      ];
-
-      let bestResult = null; let bestScore = Infinity; let bestScenario = null;
-
-      scenarios.forEach(scenario => {
-        const res = simulatePacking(scenario.axis, scenario.dir, scenario.snake, allBoxes);
-        let score = 0;
-        const batchBounds = {};
-        res.grid.forEach((row, r) => {
-          row.forEach((cell, c) => {
-            cell.stack.forEach(box => {
-              if (!batchBounds[box.id]) batchBounds[box.id] = { minR: r, maxR: r, minC: c, maxC: c };
-              batchBounds[box.id].minR = Math.min(batchBounds[box.id].minR, r);
-              batchBounds[box.id].maxR = Math.max(batchBounds[box.id].maxR, r);
-              batchBounds[box.id].minC = Math.min(batchBounds[box.id].minC, c);
-              batchBounds[box.id].maxC = Math.max(batchBounds[box.id].maxC, c);
-            });
-          });
-        });
-        
-        Object.values(batchBounds).forEach(b => {
-          score += (b.maxR - b.minR + 1) + (b.maxC - b.minC + 1); // Tính chu vi độ dẹt
-        });
-
-        if (score < bestScore) {
-          bestScore = score; bestResult = res; bestScenario = scenario;
-        }
-      });
-      finalGrid = bestResult.grid; finalOverflow = bestResult.overflow; setAutoChosenConfig(bestScenario);
     }
+  </script>
 
-    setGrid(finalGrid); setOverflowBoxes(finalOverflow); setIsPacked(true); setSelectedBatch(null);
-    if (window.innerWidth < 768) setIsSidebarOpen(false);
-  };
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-100 overflow-hidden">
+  
+  <div id="root"></div>
 
-  useEffect(() => { runSmartPacking(); }, []); 
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { 
+      LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, 
+      Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, 
+      FileSpreadsheet, UploadCloud, TableProperties, RefreshCw, Save, Download, Upload, 
+      MousePointerClick, ChevronRight 
+    } from 'lucide-react';
 
-  // --- KÉO THẢ DANH SÁCH ---
-  const handleDragStartList = (e, index) => { setDraggedItemIndex(index); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', index); };
-  const handleDragOverList = (e, index) => {
-    e.preventDefault();
-    if (draggedItemIndex === null || draggedItemIndex === index) return;
-    const newBatches = [...batches];
-    const draggedItem = newBatches[draggedItemIndex];
-    newBatches.splice(draggedItemIndex, 1);
-    newBatches.splice(index, 0, draggedItem);
-    setDraggedItemIndex(index);
-    setBatches(newBatches);
-  };
-  const handleDragEndList = () => { setDraggedItemIndex(null); };
-
-  const addBatch = () => {
-    const newId = `L0${Date.now()}`;
-    setBatches([...batches, { id: newId, name: `Lô Mới`, category: 'Khác', totalItems: 20, itemsPerBox: config.defaultItemsPerBox, unit: 'thân', priority: 'NORMAL', colorIdx: batches.length % BATCH_COLORS.length }]);
-  };
-  const removeBatch = (idToRemove) => { setBatches(batches.filter(b => b.id !== idToRemove)); setEditingBatch(null); };
-  const saveEditedBatch = () => { setBatches(batches.map(b => b.id === editingBatch.id ? editingBatch : b)); setEditingBatch(null); };
-
-  const getBreakdownText = (total, perBox, unit) => {
-    const full = Math.floor(total / perBox);
-    const partial = total % perBox;
-    if (partial === 0) return `(${full} hòm chẵn)`;
-    return `(${full} chẵn + 1 lẻ (${partial} ${unit}))`;
-  };
-
-  // --- SAO LƯU, PHỤC HỒI & CẬP NHẬT ---
-  const handleBackup = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ config, batches }));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `wms_backup_${new Date().toISOString().slice(0,10)}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-  };
-
-  const handleRestore = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const parsed = JSON.parse(evt.target.result);
-        if (parsed.config && parsed.batches) {
-          setConfig(parsed.config); setBatches(parsed.batches);
-          alert("Phục hồi dữ liệu thành công!");
-        } else alert("File backup không hợp lệ.");
-      } catch (err) { alert("Lỗi đọc file backup."); }
+    // --- HẰNG SỐ & MÀU SẮC ---
+    const PRIORITIES = {
+      HARD: { id: 'HARD', label: '1. Đáy', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-500' },
+      SOFT: { id: 'SOFT', label: '2. Giữa', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-500' },
+      NORMAL: { id: 'NORMAL', label: '3. Nóc', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-500' }
     };
-    reader.readAsText(file);
-  };
 
-  const handleForceUpdate = () => {
-    if (window.confirm("Thao tác này sẽ tải lại bộ code mới nhất từ máy chủ (Bảo toàn dữ liệu hiện tại). Bạn có muốn tiếp tục?")) {
-      window.location.reload(true);
-    }
-  };
+    const BATCH_COLORS = [
+      { main: '#3B82F6', top: '#60A5FA', right: '#2563EB', text: 'text-white' }, 
+      { main: '#EF4444', top: '#F87171', right: '#DC2828', text: 'text-white' }, 
+      { main: '#10B981', top: '#34D399', right: '#059669', text: 'text-white' }, 
+      { main: '#F59E0B', top: '#FBBF24', right: '#D97706', text: 'text-white' }, 
+      { main: '#8B5CF6', top: '#A78BFA', right: '#7C3AED', text: 'text-white' }, 
+      { main: '#EC4899', top: '#F472B6', right: '#DB2777', text: 'text-white' }, 
+      { main: '#14B8A6', top: '#2DD4BF', right: '#0D9488', text: 'text-white' }, 
+    ];
 
-  // --- XỬ LÝ CLICK SƠ ĐỒ (INSPECT) ---
-  const handleBoxClick = (batchId) => {
-    setHoveredBatchId(batchId);
-    const b = batches.find(x => x.id === batchId);
-    if(b) setSelectedBatch(b);
-  };
+    const CATEGORIES = ['Đạn thẳng', 'Đạn cối', 'Vật liệu nổ', 'Khác'];
 
-  // --- BẢN VẼ 2D ---
-  const analyzeStack = (stack) => {
-    if (stack.length === 0) return [];
-    const groups = [];
-    let currentBatch = stack[0].id;
-    let count = 0;
-    let hasPartial = false;
+    const STORAGE_KEY = 'wms_smartpacking_data_v14';
 
-    stack.forEach(box => {
-      if (box.id === currentBatch) {
-        count++; if (box.isPartial) hasPartial = true;
-      } else {
-        groups.push({ ...stack[count-1], count, hasPartial });
-        currentBatch = box.id; count = 1; hasPartial = box.isPartial;
-      }
-    });
-    groups.push({ ...stack[stack.length-1], count, hasPartial });
-    return groups.reverse(); 
-  };
-
-  const getCellBorders = (rIdx, cIdx) => {
-    let classes = "border-r border-b border-gray-300"; 
-    const stack = grid[rIdx][cIdx].stack;
-    if (stack.length === 0) return classes;
-    const topBox = stack[stack.length - 1];
-
-    if (cIdx < config.cols - 1 && grid[rIdx][cIdx + 1].stack.length > 0 && grid[rIdx][cIdx + 1].stack[grid[rIdx][cIdx + 1].stack.length - 1].id !== topBox.id)
-        classes = classes.replace('border-r border-gray-300', 'border-r-4 border-r-black z-10');
-    if (rIdx < config.rows - 1 && grid[rIdx + 1][cIdx].stack.length > 0 && grid[rIdx + 1][cIdx].stack[grid[rIdx + 1][cIdx].stack.length - 1].id !== topBox.id)
-        classes = classes.replace('border-b border-gray-300', 'border-b-4 border-b-black z-10');
-    
-    if (cIdx === 0) classes += " border-l-4 border-l-black";
-    if (rIdx === 0) classes += " border-t-4 border-t-black";
-    if (cIdx === config.cols - 1) classes += " border-r-4 border-r-black";
-    if (rIdx === config.rows - 1) classes += " border-b-4 border-b-black";
-    return classes;
-  };
-
-  const getGroupOpacity = (groupId) => {
-    if (!hoveredBatchId) return 'opacity-100'; 
-    return hoveredBatchId === groupId ? 'opacity-100 ring-2 ring-blue-500 z-50' : 'opacity-20 grayscale';
-  };
-
-  // --- CAMERA 3D ---
-  const [rot, setRot] = useState({ x: 60, z: -45 });
-  const [isDragging3D, setIsDragging3D] = useState(false);
-  const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, rotX: 0, rotZ: 0 });
-
-  const getClientXY = (e) => {
-    if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    return { x: e.clientX, y: e.clientY };
-  };
-  const handlePointerDown = (e) => {
-    if(e.target.closest('button') || e.target.closest('.batch-inspector')) return; 
-    setIsDragging3D(true);
-    const { x, y } = getClientXY(e);
-    setDragStart({ mouseX: x, mouseY: y, rotX: rot.x, rotZ: rot.z });
-  };
-  const handlePointerMove = (e) => {
-    if (!isDragging3D) return;
-    const { x, y } = getClientXY(e);
-    const deltaX = x - dragStart.mouseX;
-    const deltaY = y - dragStart.mouseY;
-    setRot({
-      x: Math.max(-20, Math.min(100, dragStart.rotX - deltaY * 0.5)), 
-      z: dragStart.rotZ + deltaX * 0.5
-    });
-  };
-  const handlePointerUp = () => setIsDragging3D(false);
-
-
-  return (
-    <div 
-      className="flex h-screen bg-gray-100 font-sans overflow-hidden relative" 
-      onTouchStart={handleTouchStart} 
-      onTouchEnd={handleTouchEnd}
-      onMouseUp={handlePointerUp} 
-      onMouseLeave={handlePointerUp}
-    >
+    function SmartPackingApp() {
+      // --- STATE KHỞI TẠO ---
+      const [activeTab, setActiveTab] = useState('batches');
+      const [viewMode, setViewMode] = useState('3D');
+      const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
       
-      <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden absolute top-4 left-4 z-50 p-2 bg-slate-900 text-white rounded-md shadow-lg">
-        {isSidebarOpen ? <X size={20}/> : <Menu size={20}/>}
-      </button>
+      const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+      const [editingBatch, setEditingBatch] = useState(null);
+      
+      const [hoveredBatchId, setHoveredBatchId] = useState(null);
+      const [selectedBatch, setSelectedBatch] = useState(null);
 
-      {/* --- CỘT TRÁI (SIDEBAR) --- */}
-      <div className={`absolute md:relative z-40 w-[360px] md:w-[420px] h-full bg-white border-r border-gray-200 flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.1)] md:shadow-lg transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+      const [config, setConfig] = useState({
+        rows: 4, cols: 6, maxHeight: 10, defaultItemsPerBox: 2,
+        isManualRouting: false, fillAxis: 'col', fillDirection: 'ltr', isSnakeRouting: true
+      });
+      const [autoChosenConfig, setAutoChosenConfig] = useState(null);
+
+      const [batches, setBatches] = useState([
+        { id: 'L01', name: 'Đạn CX57', category: 'Đạn thẳng', totalItems: 48, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 0 },
+        { id: 'L02', name: 'Đạn C60', category: 'Đạn cối', totalItems: 36, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 1 },
+        { id: 'L03', name: 'Đạn L X', category: 'Vật liệu nổ', totalItems: 15, itemsPerBox: 2, unit: 'thân', priority: 'NORMAL', colorIdx: 2 },
+      ]);
+
+      const [grid, setGrid] = useState([]);
+      const [overflowBoxes, setOverflowBoxes] = useState([]);
+      const [isPacked, setIsPacked] = useState(false);
+
+      // --- LOCAL STORAGE ---
+      useEffect(() => {
+        const savedData = localStorage.getItem(STORAGE_KEY);
+        if (savedData) {
+          try {
+            const parsed = JSON.parse(savedData);
+            if (parsed.config) setConfig(parsed.config);
+            if (parsed.batches) setBatches(parsed.batches);
+          } catch (e) { console.error("Lỗi đọc dữ liệu", e); }
+        }
         
-        <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <Layers className="text-emerald-400" />
-            <div>
-              <h1 className="font-bold text-lg leading-tight">WMS Optimizer V14</h1>
-              <p className="text-[10px] text-slate-400">PWA, Gestures & Category Grouping</p>
-            </div>
-          </div>
-          <button className="md:hidden text-gray-400" onClick={() => setIsSidebarOpen(false)}><X size={20}/></button>
-        </div>
+        if (typeof window !== 'undefined' && !window.XLSX) {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          script.async = true;
+          document.head.appendChild(script);
+        }
+      }, []);
 
-        <div className="flex border-b shrink-0 bg-gray-50">
-          <button onClick={() => setActiveTab('batches')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'batches' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Danh sách Lô</button>
-          <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Cài đặt & App</button>
-        </div>
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ config, batches }));
+      }, [config, batches]);
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-gray-50/30">
+      const touchStartX = useRef(null);
+      
+      useEffect(() => {
+        const handleResize = () => setIsSidebarOpen(window.innerWidth >= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+      }, []);
+
+      const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+      const handleTouchEnd = (e) => {
+        if (touchStartX.current === null) return;
+        const touchEndX = e.changedTouches[0].clientX;
+        const diff = touchStartX.current - touchEndX;
+        if (diff > 50 && isSidebarOpen) setIsSidebarOpen(false); 
+        if (diff < -50 && !isSidebarOpen && touchStartX.current < 30) setIsSidebarOpen(true); 
+        touchStartX.current = null;
+      };
+
+      // --- THUẬT TOÁN ĐIỀU PHỐI ---
+      const generateRoute = (rows, cols, axis, direction, isSnake) => {
+        const route = [];
+        if (axis === 'col') {
+          const cList = [];
+          for (let c = 0; c < cols; c++) cList.push(direction === 'ltr' ? c : cols - 1 - c);
+          cList.forEach((c, index) => {
+            const topToBottom = isSnake ? (index % 2 === 0) : true;
+            if (topToBottom) for (let r = 0; r < rows; r++) route.push({r, c});
+            else for (let r = rows - 1; r >= 0; r--) route.push({r, c});
+          });
+        } else {
+          const rList = [];
+          for (let r = 0; r < rows; r++) rList.push(r);
+          rList.forEach((r, index) => {
+            const leftToRight = isSnake ? (index % 2 === 0) : true;
+            const actualLTR = direction === 'ltr' ? leftToRight : !leftToRight;
+            if (actualLTR) for (let c = 0; c < cols; c++) route.push({r, c});
+            else for (let c = cols - 1; c >= 0; c--) route.push({r, c});
+          });
+        }
+        return route;
+      };
+
+      const simulatePacking = (axis, direction, isSnake, allBoxesToPack) => {
+        const tempGrid = Array(config.rows).fill(null).map(() => Array(config.cols).fill(null).map(() => ({ stack: [] })));
+        const tempOverflow = [];
+        const route = generateRoute(config.rows, config.cols, axis, direction, isSnake);
+        let routeIdx = 0;
+
+        allBoxesToPack.forEach(box => {
+          let placed = false;
+          while (routeIdx < route.length) {
+            const {r, c} = route[routeIdx];
+            if (tempGrid[r][c].stack.length < config.maxHeight) {
+              tempGrid[r][c].stack.push(box);
+              placed = true;
+              break; 
+            } else {
+              routeIdx++; 
+            }
+          }
+          if (!placed) tempOverflow.push(box);
+        });
+        return { grid: tempGrid, overflow: tempOverflow };
+      };
+
+      const runSmartPacking = () => {
+        let allBoxes = [];
+        batches.forEach(batch => {
+          const perBox = batch.itemsPerBox || config.defaultItemsPerBox;
+          const fullBoxesCount = Math.floor(batch.totalItems / perBox);
+          const partialItems = batch.totalItems % perBox;
           
-          {/* TAB CẤU HÌNH & APP */}
-          {activeTab === 'config' && (
-            <div className="p-4 space-y-4 animate-fadeIn pb-20">
-              
-              {/* NÚT LƯU & CẬP NHẬT NHANH */}
-              <button onClick={runSmartPacking} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform active:scale-95">
-                <RefreshCw size={16}/> Cập nhật sơ đồ mới
-              </button>
+          const batchBoxes = Array(fullBoxesCount).fill({ ...batch, count: perBox, isPartial: false });
+          if (partialItems > 0) batchBoxes.push({ ...batch, count: partialItems, isPartial: true });
+          batchBoxes.forEach(box => allBoxes.push(box));
+        });
 
-              <div className="bg-white p-3 rounded border shadow-sm">
-                <h3 className="text-xs font-bold text-gray-800 uppercase mb-3 border-b pb-1">📐 Kích thước mặt sàn</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase">Số Cột ngang (X)</label>
-                    <input type="number" className="w-full p-2 border rounded" value={config.cols} onChange={e => setConfig({...config, cols: Number(e.target.value)})} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase">Số Hàng dọc (Y)</label>
-                    <input type="number" className="w-full p-2 border rounded" value={config.rows} onChange={e => setConfig({...config, rows: Number(e.target.value)})} />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase">Chiều cao tối đa (Hòm/Chồng)</label>
-                    <input type="number" className="w-full p-2 border rounded border-blue-300 bg-blue-50 font-bold" value={config.maxHeight} onChange={e => setConfig({...config, maxHeight: Number(e.target.value)})} />
-                  </div>
-                </div>
-              </div>
+        const priorityWeight = { 'HARD': 3, 'SOFT': 2, 'NORMAL': 1 };
+        const orderedBatchIds = batches.map(b => b.id);
+        const orderedCategories = [...new Set(batches.map(b => b.category))];
 
-              <div className="bg-white p-3 rounded border shadow-sm">
-                <h3 className="text-xs font-bold text-gray-800 uppercase mb-3 border-b pb-1">🧠 Điều phối (Luôn Xếp Đầy Chồng)</h3>
-                <button onClick={() => setConfig({...config, isManualRouting: !config.isManualRouting})} className={`w-full flex items-center justify-between p-3 rounded border-2 mb-3 transition-colors ${config.isManualRouting ? 'border-orange-500 bg-orange-50 text-orange-800' : 'border-blue-500 bg-blue-50 text-blue-800'}`}>
-                  <div className="flex flex-col text-left">
-                    <span className="font-bold text-sm">{config.isManualRouting ? 'Chế độ Thủ Công' : 'AI Tự Động Tối Ưu'}</span>
-                    <span className="text-[10px]">{config.isManualRouting ? 'Ép xếp theo hướng bạn chọn' : 'AI tự tìm hướng vuông vức nhất'}</span>
-                  </div>
-                  {config.isManualRouting ? <CheckSquare size={20} className="text-orange-500"/> : <Activity size={20} className="text-blue-500"/>}
-                </button>
+        allBoxes.sort((a, b) => {
+          const catA = orderedCategories.indexOf(a.category);
+          const catB = orderedCategories.indexOf(b.category);
+          if (catA !== catB) return catA - catB; 
 
-                {config.isManualRouting && (
-                  <div className="space-y-3 p-3 bg-gray-50 rounded border animate-fadeIn">
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Kiểu Nối Tiếp</label>
-                      <div className="flex gap-2">
-                        <button onClick={() => setConfig({...config, isSnakeRouting: true})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.isSnakeRouting ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}>Ziczac (Giữ Lô liền)</button>
-                        <button onClick={() => setConfig({...config, isSnakeRouting: false})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${!config.isSnakeRouting ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}>Cắt ngang (Reset hàng)</button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cố định trục xếp</label>
-                      <div className="flex gap-2">
-                        <button onClick={() => setConfig({...config, fillAxis: 'col'})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.fillAxis === 'col' ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}><ArrowDown size={14}/> Xếp theo dọc</button>
-                        <button onClick={() => setConfig({...config, fillAxis: 'row'})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.fillAxis === 'row' ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}><ArrowRight size={14}/> Xếp theo ngang</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+          if (priorityWeight[a.priority] !== priorityWeight[b.priority]) {
+            return priorityWeight[b.priority] - priorityWeight[a.priority]; 
+          }
+          return orderedBatchIds.indexOf(a.id) - orderedBatchIds.indexOf(b.id); 
+        });
 
-              <div className="bg-slate-50 p-3 rounded border shadow-sm">
-                <h3 className="text-xs font-bold text-slate-800 uppercase mb-3 border-b border-slate-200 pb-1">⚙️ Hệ thống & Dữ liệu</h3>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <button onClick={handleBackup} className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700"><Download size={16}/> Sao lưu (Export)</button>
-                  <label className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700 cursor-pointer">
-                    <Upload size={16}/> Phục hồi (Import)
-                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
-                  </label>
-                </div>
-                <button onClick={handleForceUpdate} className="w-full flex items-center justify-center bg-emerald-100 text-emerald-800 border border-emerald-300 p-2 rounded hover:bg-emerald-200 gap-2 text-xs font-bold transition-colors">
-                  <UploadCloud size={16}/> Cập nhật App (Xóa Cache)
-                </button>
-              </div>
+        let finalGrid, finalOverflow;
 
-            </div>
-          )}
+        if (config.isManualRouting) {
+          const result = simulatePacking(config.fillAxis, config.fillDirection, config.isSnakeRouting, allBoxes);
+          finalGrid = result.grid;
+          finalOverflow = result.overflow;
+          setAutoChosenConfig(null);
+        } else {
+          const scenarios = [
+            { axis: 'col', dir: 'ltr', snake: false, label: 'Cột Dọc (Trái qua)' },
+            { axis: 'col', dir: 'rtl', snake: false, label: 'Cột Dọc (Phải qua)' },
+            { axis: 'row', dir: 'ltr', snake: false, label: 'Ngang (Trái qua)' },
+            { axis: 'row', dir: 'rtl', snake: false, label: 'Ngang (Phải qua)' },
+            { axis: 'col', dir: 'ltr', snake: true, label: 'Cột Dọc (Trái qua) + Ziczac' },
+            { axis: 'col', dir: 'rtl', snake: true, label: 'Cột Dọc (Phải qua) + Ziczac' },
+            { axis: 'row', dir: 'ltr', snake: true, label: 'Ngang (Trái qua) + Ziczac' },
+            { axis: 'row', dir: 'rtl', snake: true, label: 'Ngang (Phải qua) + Ziczac' }
+          ];
 
-          {/* TAB DANH SÁCH LÔ */}
-          {activeTab === 'batches' && (
-            <div className="flex flex-col min-h-full">
-              
-              <div className="p-3 bg-white border-b flex justify-between items-center shrink-0 shadow-sm z-10 sticky top-0">
-                 <button onClick={addBatch} className="flex items-center gap-1 text-white text-xs font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded shadow transition-colors">
-                    <Plus size={14}/> Thêm Lô
-                 </button>
-                 <span className="text-[10px] text-gray-400 italic">Tự động lưu...</span>
-              </div>
+          let bestResult = null; let bestScore = Infinity; let bestScenario = null;
 
-              <div className="px-3 pt-3 text-[10px] text-gray-500 uppercase font-bold tracking-wider leading-tight">
-                 Kéo <GripVertical size={12} className="inline text-gray-800"/> để ưu tiên xếp trước (Trong cùng nhóm Loại)
-              </div>
+          scenarios.forEach(scenario => {
+            const res = simulatePacking(scenario.axis, scenario.dir, scenario.snake, allBoxes);
+            let score = 0;
+            const batchBounds = {};
+            res.grid.forEach((row, r) => {
+              row.forEach((cell, c) => {
+                cell.stack.forEach(box => {
+                  if (!batchBounds[box.id]) batchBounds[box.id] = { minR: r, maxR: r, minC: c, maxC: c };
+                  batchBounds[box.id].minR = Math.min(batchBounds[box.id].minR, r);
+                  batchBounds[box.id].maxR = Math.max(batchBounds[box.id].maxR, r);
+                  batchBounds[box.id].minC = Math.min(batchBounds[box.id].minC, c);
+                  batchBounds[box.id].maxC = Math.max(batchBounds[box.id].maxC, c);
+                });
+              });
+            });
+            
+            Object.values(batchBounds).forEach(b => {
+              score += (b.maxR - b.minR + 1) + (b.maxC - b.minC + 1); 
+            });
 
-              <div className="flex-1 overflow-y-auto p-2 space-y-2 pb-24 mt-1">
-                {batches.map((batch, idx) => (
-                  <div 
-                    key={batch.id} 
-                    draggable
-                    onDragStart={(e) => handleDragStartList(e, idx)}
-                    onDragOver={(e) => handleDragOverList(e, idx)}
-                    onDragEnd={handleDragEndList}
-                    onMouseEnter={() => setHoveredBatchId(batch.id)}
-                    onMouseLeave={() => setHoveredBatchId(null)}
-                    onClick={() => handleBoxClick(batch.id)}
-                    className={`flex flex-col border rounded shadow-sm bg-white hover:border-blue-400 transition-all cursor-pointer ${draggedItemIndex === idx ? 'opacity-40 scale-95' : 'border-gray-200'} ${(hoveredBatchId === batch.id || selectedBatch?.id === batch.id) ? 'ring-2 ring-blue-400 -translate-y-0.5' : ''}`}
-                  >
-                     <div className="flex items-stretch h-[60px]">
-                       <div className="w-8 flex items-center justify-center cursor-move text-gray-400 hover:text-gray-800 bg-gray-50 rounded-l border-r border-gray-100 shrink-0">
-                          <GripHorizontal size={14} className="rotate-90"/>
-                       </div>
-                       <div className="w-1.5 shrink-0 transition-colors" style={{ backgroundColor: BATCH_COLORS[batch.colorIdx].main }}></div>
-                       
-                       <div className="flex-1 p-2 min-w-0 flex flex-col justify-center">
-                          <div className="flex justify-between items-center gap-2">
-                             <div className="flex items-baseline gap-1 truncate">
-                               <span className="font-bold text-gray-900 text-[13px]">{batch.name}:</span>
-                               <span className="font-bold text-blue-700 text-[13px]">{batch.totalItems} {batch.unit}</span>
-                             </div>
-                             <div className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${PRIORITIES[batch.priority].bg} ${PRIORITIES[batch.priority].text}`}>
-                               {PRIORITIES[batch.priority].label.split(' ')[1]}
-                             </div>
-                          </div>
-                          <div className="flex justify-between items-center mt-0.5">
-                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1 rounded truncate max-w-[100px]">{batch.category}</span>
-                             <span className="text-[10px] text-gray-500 font-medium truncate">{getBreakdownText(batch.totalItems, batch.itemsPerBox, batch.unit)}</span>
-                          </div>
-                       </div>
+            if (score < bestScore) {
+              bestScore = score; bestResult = res; bestScenario = scenario;
+            }
+          });
+          finalGrid = bestResult.grid; finalOverflow = bestResult.overflow; setAutoChosenConfig(bestScenario);
+        }
 
-                       <button 
-                         onClick={(e) => { e.stopPropagation(); setEditingBatch({...batch}); }}
-                         className="w-10 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors shrink-0 rounded-r border-l border-gray-100"
-                       >
-                         <Settings size={16} />
-                       </button>
-                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        setGrid(finalGrid); setOverflowBoxes(finalOverflow); setIsPacked(true); setSelectedBatch(null);
+        if (window.innerWidth < 768) setIsSidebarOpen(false);
+      };
 
-        {/* NÚT CHẠY THUẬT TOÁN (Sticky Bottom) */}
-        <div className="absolute bottom-0 left-0 w-full p-4 border-t border-gray-200 bg-white/90 backdrop-blur-sm shrink-0 z-20">
-          <button onClick={runSmartPacking} className="w-full bg-slate-900 hover:bg-black text-white py-3.5 rounded-lg font-bold shadow-lg shadow-slate-900/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
-            <Play size={18} fill="currentColor"/> XẾP SƠ ĐỒ MỚI
+      useEffect(() => { runSmartPacking(); }, []); 
+
+      // --- KÉO THẢ ---
+      const handleDragStartList = (e, index) => { setDraggedItemIndex(index); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', index); };
+      const handleDragOverList = (e, index) => {
+        e.preventDefault();
+        if (draggedItemIndex === null || draggedItemIndex === index) return;
+        const newBatches = [...batches];
+        const draggedItem = newBatches[draggedItemIndex];
+        newBatches.splice(draggedItemIndex, 1);
+        newBatches.splice(index, 0, draggedItem);
+        setDraggedItemIndex(index);
+        setBatches(newBatches);
+      };
+      const handleDragEndList = () => { setDraggedItemIndex(null); };
+
+      const addBatch = () => {
+        const newId = `L0${Date.now()}`;
+        setBatches([...batches, { id: newId, name: `Lô Mới`, category: 'Khác', totalItems: 20, itemsPerBox: config.defaultItemsPerBox, unit: 'thân', priority: 'NORMAL', colorIdx: batches.length % BATCH_COLORS.length }]);
+      };
+      const removeBatch = (idToRemove) => { setBatches(batches.filter(b => b.id !== idToRemove)); setEditingBatch(null); };
+      const saveEditedBatch = () => { setBatches(batches.map(b => b.id === editingBatch.id ? editingBatch : b)); setEditingBatch(null); };
+
+      const getBreakdownText = (total, perBox, unit) => {
+        const full = Math.floor(total / perBox);
+        const partial = total % perBox;
+        if (partial === 0) return `(${full} hòm chẵn)`;
+        return `(${full} chẵn + 1 lẻ (${partial} ${unit}))`;
+      };
+
+      const handleBackup = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ config, batches }));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", `wms_backup_${new Date().toISOString().slice(0,10)}.json`);
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+      };
+
+      const handleRestore = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const parsed = JSON.parse(evt.target.result);
+            if (parsed.config && parsed.batches) {
+              setConfig(parsed.config); setBatches(parsed.batches);
+              alert("Phục hồi dữ liệu thành công!");
+            } else alert("File backup không hợp lệ.");
+          } catch (err) { alert("Lỗi đọc file backup."); }
+        };
+        reader.readAsText(file);
+      };
+
+      const handleForceUpdate = () => {
+        if (window.confirm("Thao tác này sẽ tải lại bộ code mới nhất từ máy chủ. Bạn có muốn tiếp tục?")) {
+          window.location.reload(true);
+        }
+      };
+
+      const handleBoxClick = (batchId) => {
+        setHoveredBatchId(batchId);
+        const b = batches.find(x => x.id === batchId);
+        if(b) setSelectedBatch(b);
+      };
+
+      const analyzeStack = (stack) => {
+        if (stack.length === 0) return [];
+        const groups = [];
+        let currentBatch = stack[0].id;
+        let count = 0;
+        let hasPartial = false;
+
+        stack.forEach(box => {
+          if (box.id === currentBatch) {
+            count++; if (box.isPartial) hasPartial = true;
+          } else {
+            groups.push({ ...stack[count-1], count, hasPartial });
+            currentBatch = box.id; count = 1; hasPartial = box.isPartial;
+          }
+        });
+        groups.push({ ...stack[stack.length-1], count, hasPartial });
+        return groups.reverse(); 
+      };
+
+      const getCellBorders = (rIdx, cIdx) => {
+        let classes = "border-r border-b border-gray-300"; 
+        const stack = grid[rIdx][cIdx].stack;
+        if (stack.length === 0) return classes;
+        const topBox = stack[stack.length - 1];
+
+        if (cIdx < config.cols - 1 && grid[rIdx][cIdx + 1].stack.length > 0 && grid[rIdx][cIdx + 1].stack[grid[rIdx][cIdx + 1].stack.length - 1].id !== topBox.id)
+            classes = classes.replace('border-r border-gray-300', 'border-r-4 border-r-black z-10');
+        if (rIdx < config.rows - 1 && grid[rIdx + 1][cIdx].stack.length > 0 && grid[rIdx + 1][cIdx].stack[grid[rIdx + 1][cIdx].stack.length - 1].id !== topBox.id)
+            classes = classes.replace('border-b border-gray-300', 'border-b-4 border-b-black z-10');
+        
+        if (cIdx === 0) classes += " border-l-4 border-l-black";
+        if (rIdx === 0) classes += " border-t-4 border-t-black";
+        if (cIdx === config.cols - 1) classes += " border-r-4 border-r-black";
+        if (rIdx === config.rows - 1) classes += " border-b-4 border-b-black";
+        return classes;
+      };
+
+      const getGroupOpacity = (groupId) => {
+        if (!hoveredBatchId) return 'opacity-100'; 
+        return hoveredBatchId === groupId ? 'opacity-100 ring-2 ring-blue-500 z-50' : 'opacity-20 grayscale';
+      };
+
+      const [rot, setRot] = useState({ x: 60, z: -45 });
+      const [isDragging3D, setIsDragging3D] = useState(false);
+      const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, rotX: 0, rotZ: 0 });
+
+      const getClientXY = (e) => {
+        if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        return { x: e.clientX, y: e.clientY };
+      };
+      const handlePointerDown = (e) => {
+        if(e.target.closest('button') || e.target.closest('.batch-inspector')) return; 
+        setIsDragging3D(true);
+        const { x, y } = getClientXY(e);
+        setDragStart({ mouseX: x, mouseY: y, rotX: rot.x, rotZ: rot.z });
+      };
+      const handlePointerMove = (e) => {
+        if (!isDragging3D) return;
+        const { x, y } = getClientXY(e);
+        const deltaX = x - dragStart.mouseX;
+        const deltaY = y - dragStart.mouseY;
+        setRot({
+          x: Math.max(-20, Math.min(100, dragStart.rotX - deltaY * 0.5)), 
+          z: dragStart.rotZ + deltaX * 0.5
+        });
+      };
+      const handlePointerUp = () => setIsDragging3D(false);
+
+
+      return (
+        <div 
+          className="flex h-screen bg-gray-100 font-sans overflow-hidden relative" 
+          onTouchStart={handleTouchStart} 
+          onTouchEnd={handleTouchEnd}
+          onMouseUp={handlePointerUp} 
+          onMouseLeave={handlePointerUp}
+        >
+          
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden absolute top-4 left-4 z-50 p-2 bg-slate-900 text-white rounded-md shadow-lg">
+            {isSidebarOpen ? <X size={20}/> : <Menu size={20}/>}
           </button>
-        </div>
-      </div>
 
-      {/* --- MODAL CHỈNH SỬA LÔ --- */}
-      {editingBatch && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fadeIn backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
-             <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
-               <h3 className="font-bold">Cài đặt Lô</h3>
-               <button onClick={() => setEditingBatch(null)} className="text-gray-400 hover:text-white"><XCircle size={20}/></button>
-             </div>
-             
-             <div className="p-5 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Tên Lô / Mã Lô</label>
-                    <input type="text" className="w-full p-2 border rounded bg-gray-50 font-bold" value={editingBatch.name} onChange={e => setEditingBatch({...editingBatch, name: e.target.value})} />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Loại / Nhóm Lô (Category)</label>
-                    <div className="flex gap-2">
-                      <select value={editingBatch.category} onChange={e => setEditingBatch({...editingBatch, category: e.target.value})} className="flex-1 p-2 border rounded font-bold text-sm bg-emerald-50 text-emerald-800 border-emerald-200">
-                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
+          <div className={`absolute md:relative z-40 w-[360px] md:w-[420px] h-full bg-white border-r border-gray-200 flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.1)] md:shadow-lg transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+            
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <Layers className="text-emerald-400" />
+                <div>
+                  <h1 className="font-bold text-lg leading-tight">WMS Optimizer V14</h1>
+                  <p className="text-[10px] text-slate-400">PWA, Gestures & Category Grouping</p>
+                </div>
+              </div>
+              <button className="md:hidden text-gray-400" onClick={() => setIsSidebarOpen(false)}><X size={20}/></button>
+            </div>
+
+            <div className="flex border-b shrink-0 bg-gray-50">
+              <button onClick={() => setActiveTab('batches')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'batches' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Danh sách Lô</button>
+              <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Cài đặt & App</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-gray-50/30">
+              
+              {activeTab === 'config' && (
+                <div className="p-4 space-y-4 animate-fadeIn pb-20">
+                  <button onClick={runSmartPacking} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform active:scale-95">
+                    <RefreshCw size={16}/> Cập nhật sơ đồ mới
+                  </button>
+
+                  <div className="bg-white p-3 rounded border shadow-sm">
+                    <h3 className="text-xs font-bold text-gray-800 uppercase mb-3 border-b pb-1">📐 Kích thước mặt sàn</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Số Cột ngang (X)</label>
+                        <input type="number" className="w-full p-2 border rounded" value={config.cols} onChange={e => setConfig({...config, cols: Number(e.target.value)})} />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Số Hàng dọc (Y)</label>
+                        <input type="number" className="w-full p-2 border rounded" value={config.rows} onChange={e => setConfig({...config, rows: Number(e.target.value)})} />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Chiều cao tối đa (Hòm/Chồng)</label>
+                        <input type="number" className="w-full p-2 border rounded border-blue-300 bg-blue-50 font-bold" value={config.maxHeight} onChange={e => setConfig({...config, maxHeight: Number(e.target.value)})} />
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Tổng SL</label>
-                    <input type="number" className="w-full p-2 border rounded font-bold text-blue-700 bg-blue-50" value={editingBatch.totalItems} onChange={e => setEditingBatch({...editingBatch, totalItems: Number(e.target.value)})} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Đơn vị</label>
-                    <input type="text" className="w-full p-2 border rounded" value={editingBatch.unit} onChange={e => setEditingBatch({...editingBatch, unit: e.target.value})} />
-                  </div>
-                   <div>
-                     <label className="block text-xs font-bold text-gray-500 mb-1">Quy cách (SL/Hòm)</label>
-                     <input type="number" className="w-full p-2 border rounded" value={editingBatch.itemsPerBox} onChange={e => setEditingBatch({...editingBatch, itemsPerBox: Number(e.target.value)})} />
-                   </div>
-                   <div>
-                     <label className="block text-xs font-bold text-gray-500 mb-1">Tầng xếp (Đáy/Nóc)</label>
-                     <select value={editingBatch.priority} onChange={e => setEditingBatch({...editingBatch, priority: e.target.value})} className={`w-full p-2 border rounded text-xs font-bold ${PRIORITIES[editingBatch.priority].bg} ${PRIORITIES[editingBatch.priority].text}`}>
-                       <option value="HARD">Đáy (Bắt buộc)</option>
-                       <option value="SOFT">Giữa (Ưu tiên)</option>
-                       <option value="NORMAL">Nóc (Thường)</option>
-                     </select>
-                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-2">Màu sắc nhận diện</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {BATCH_COLORS.map((color, idx) => (
-                      <button key={idx} onClick={() => setEditingBatch({...editingBatch, colorIdx: idx})} className={`w-8 h-8 rounded-full border-2 transition-transform ${editingBatch.colorIdx === idx ? 'border-gray-900 scale-110 shadow-md' : 'border-transparent'}`} style={{ backgroundColor: color.main }} />
+                  <div className="bg-white p-3 rounded border shadow-sm">
+                    <h3 className="text-xs font-bold text-gray-800 uppercase mb-3 border-b pb-1">🧠 Điều phối (Luôn Xếp Đầy Chồng)</h3>
+                    <button onClick={() => setConfig({...config, isManualRouting: !config.isManualRouting})} className={`w-full flex items-center justify-between p-3 rounded border-2 mb-3 transition-colors ${config.isManualRouting ? 'border-orange-500 bg-orange-50 text-orange-800' : 'border-blue-500 bg-blue-50 text-blue-800'}`}>
+                      <div className="flex flex-col text-left">
+                        <span className="font-bold text-sm">{config.isManualRouting ? 'Chế độ Thủ Công' : 'AI Tự Động Tối Ưu'}</span>
+                        <span className="text-[10px]">{config.isManualRouting ? 'Ép xếp theo hướng bạn chọn' : 'AI tự tìm hướng vuông vức nhất'}</span>
+                      </div>
+                      {config.isManualRouting ? <CheckSquare size={20} className="text-orange-500"/> : <Activity size={20} className="text-blue-500"/>}
+                    </button>
+
+                    {config.isManualRouting && (
+                      <div className="space-y-3 p-3 bg-gray-50 rounded border animate-fadeIn">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Kiểu Nối Tiếp</label>
+                          <div className="flex gap-2">
+                            <button onClick={() => setConfig({...config, isSnakeRouting: true})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.isSnakeRouting ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}>Ziczac (Giữ Lô liền)</button>
+                            <button onClick={() => setConfig({...config, isSnakeRouting: false})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${!config.isSnakeRouting ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}>Cắt ngang (Reset hàng)</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cố định trục xếp</label>
+                          <div className="flex gap-2">
+                            <button onClick={() => setConfig({...config, fillAxis: 'col'})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.fillAxis === 'col' ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}><ArrowDown size={14}/> Xếp theo dọc</button>
+                            <button onClick={() => setConfig({...config, fillAxis: 'row'})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.fillAxis === 'row' ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}><ArrowRight size={14}/> Xếp theo ngang</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded border shadow-sm">
+                    <h3 className="text-xs font-bold text-slate-800 uppercase mb-3 border-b border-slate-200 pb-1">⚙️ Hệ thống & Dữ liệu</h3>
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <button onClick={handleBackup} className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700"><Download size={16}/> Sao lưu (Export)</button>
+                      <label className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700 cursor-pointer">
+                        <Upload size={16}/> Phục hồi (Import)
+                        <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                      </label>
+                    </div>
+                    <button onClick={handleForceUpdate} className="w-full flex items-center justify-center bg-emerald-100 text-emerald-800 border border-emerald-300 p-2 rounded hover:bg-emerald-200 gap-2 text-xs font-bold transition-colors">
+                      <UploadCloud size={16}/> Cập nhật App (Xóa Cache)
+                    </button>
+                  </div>
+
+                </div>
+              )}
+
+              {activeTab === 'batches' && (
+                <div className="flex flex-col min-h-full">
+                  
+                  <div className="p-3 bg-white border-b flex justify-between items-center shrink-0 shadow-sm z-10 sticky top-0">
+                     <button onClick={addBatch} className="flex items-center gap-1 text-white text-xs font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded shadow transition-colors">
+                        <Plus size={14}/> Thêm Lô
+                     </button>
+                     <span className="text-[10px] text-gray-400 italic">Tự động lưu...</span>
+                  </div>
+
+                  <div className="px-3 pt-3 text-[10px] text-gray-500 uppercase font-bold tracking-wider leading-tight">
+                     Kéo <GripVertical size={12} className="inline text-gray-800"/> để ưu tiên xếp trước (Trong cùng nhóm Loại)
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-2 space-y-2 pb-24 mt-1">
+                    {batches.map((batch, idx) => (
+                      <div 
+                        key={batch.id} 
+                        draggable
+                        onDragStart={(e) => handleDragStartList(e, idx)}
+                        onDragOver={(e) => handleDragOverList(e, idx)}
+                        onDragEnd={handleDragEndList}
+                        onMouseEnter={() => setHoveredBatchId(batch.id)}
+                        onMouseLeave={() => setHoveredBatchId(null)}
+                        onClick={() => handleBoxClick(batch.id)}
+                        className={`flex flex-col border rounded shadow-sm bg-white hover:border-blue-400 transition-all cursor-pointer ${draggedItemIndex === idx ? 'opacity-40 scale-95' : 'border-gray-200'} ${(hoveredBatchId === batch.id || selectedBatch?.id === batch.id) ? 'ring-2 ring-blue-400 -translate-y-0.5' : ''}`}
+                      >
+                         <div className="flex items-stretch h-[60px]">
+                           <div className="w-8 flex items-center justify-center cursor-move text-gray-400 hover:text-gray-800 bg-gray-50 rounded-l border-r border-gray-100 shrink-0">
+                              <GripHorizontal size={14} className="rotate-90"/>
+                           </div>
+                           <div className="w-1.5 shrink-0 transition-colors" style={{ backgroundColor: BATCH_COLORS[batch.colorIdx].main }}></div>
+                           
+                           <div className="flex-1 p-2 min-w-0 flex flex-col justify-center">
+                              <div className="flex justify-between items-center gap-2">
+                                 <div className="flex items-baseline gap-1 truncate">
+                                   <span className="font-bold text-gray-900 text-[13px]">{batch.name}:</span>
+                                   <span className="font-bold text-blue-700 text-[13px]">{batch.totalItems} {batch.unit}</span>
+                                 </div>
+                                 <div className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${PRIORITIES[batch.priority].bg} ${PRIORITIES[batch.priority].text}`}>
+                                   {PRIORITIES[batch.priority].label.split(' ')[1]}
+                                 </div>
+                              </div>
+                              <div className="flex justify-between items-center mt-0.5">
+                                 <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1 rounded truncate max-w-[100px]">{batch.category}</span>
+                                 <span className="text-[10px] text-gray-500 font-medium truncate">{getBreakdownText(batch.totalItems, batch.itemsPerBox, batch.unit)}</span>
+                              </div>
+                           </div>
+
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); setEditingBatch({...batch}); }}
+                             className="w-10 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors shrink-0 rounded-r border-l border-gray-100"
+                           >
+                             <Settings size={16} />
+                           </button>
+                         </div>
+                      </div>
                     ))}
                   </div>
                 </div>
-             </div>
+              )}
+            </div>
 
-             <div className="p-4 bg-gray-50 border-t flex justify-between">
-                <button onClick={() => removeBatch(editingBatch.id)} className="text-red-600 font-bold text-sm px-4 py-2 hover:bg-red-50 rounded transition-colors">Xóa</button>
-                <div className="flex gap-2">
-                  <button onClick={() => setEditingBatch(null)} className="text-gray-600 font-bold text-sm px-4 py-2 hover:bg-gray-200 rounded transition-colors">Hủy</button>
-                  <button onClick={saveEditedBatch} className="bg-blue-600 text-white font-bold text-sm px-6 py-2 hover:bg-blue-700 rounded shadow transition-colors">Lưu lại</button>
-                </div>
-             </div>
+            <div className="absolute bottom-0 left-0 w-full p-4 border-t border-gray-200 bg-white/90 backdrop-blur-sm shrink-0 z-20">
+              <button onClick={runSmartPacking} className="w-full bg-slate-900 hover:bg-black text-white py-3.5 rounded-lg font-bold shadow-lg shadow-slate-900/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
+                <Play size={18} fill="currentColor"/> XẾP SƠ ĐỒ MỚI
+              </button>
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* --- KHU VỰC TRUNG TÂM (CANVAS) --- */}
-      <div className="flex-1 relative flex flex-col bg-[#e5e7eb] overflow-hidden" onTouchMove={handlePointerMove}>
-        
-        {/* NÚT CHUYỂN ĐỔI VIEW 2D/3D */}
-        {isPacked && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white rounded-full shadow-md p-1 flex items-center gap-1 z-30">
-            <button onClick={() => setViewMode('2D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '2D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
-               <LayoutGrid size={14}/> 2D
-            </button>
-            <button onClick={() => setViewMode('3D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '3D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
-               <Box size={14}/> 3D 360°
-            </button>
-          </div>
-        )}
-
-        {/* THÔNG BÁO TRÀN KHO */}
-        {overflowBoxes.length > 0 && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-100 text-red-800 px-4 py-2 rounded-md text-xs font-bold border border-red-300 flex items-center gap-2 shadow-lg z-30">
-            <AlertCircle size={16}/> Sức chứa không đủ! Còn dư {overflowBoxes.length} hòm.
-          </div>
-        )}
-
-        <div className="flex-1 overflow-auto p-4 md:p-8 custom-scrollbar relative">
-          
-          {/* ======== CHẾ ĐỘ 2D ======== */}
-          {viewMode === '2D' && isPacked && (
-            <div className="flex justify-center min-w-max min-h-max mt-16 md:mt-0 pb-[100px]">
-              <div className="bg-white p-8 shadow-2xl relative inline-block transition-all duration-300">
-                 <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2">
-                   <div>
-                      <h2 className="text-xl font-black uppercase tracking-wider text-black">BẢN VẼ MẶT BẰNG KHO</h2>
-                      <div className="text-xs text-gray-600 font-mono mt-1 flex items-center gap-3">
-                         <span>Max: {config.maxHeight} hòm/chồng</span>
-                         <span>|</span>
-                         <span className="text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-bold border border-blue-100">
-                           {config.isManualRouting ? 'Chế độ: Cưỡng chế thủ công' : `AI Đề Xuất: ${autoChosenConfig ? autoChosenConfig.label : ''}`}
-                         </span>
-                      </div>
-                   </div>
+          {editingBatch && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fadeIn backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
+                 <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
+                   <h3 className="font-bold">Cài đặt Lô</h3>
+                   <button onClick={() => setEditingBatch(null)} className="text-gray-400 hover:text-white"><XCircle size={20}/></button>
                  </div>
-
-                 <div className="flex relative">
-                    <div className="flex flex-col mr-2 pt-[20px]">
-                      {grid.map((_, rIdx) => (
-                        <div key={`y-${rIdx}`} className="h-[80px] flex items-center justify-end pr-2 text-sm font-bold text-gray-400">
-                          H{rIdx + 1}
+                 
+                 <div className="p-5 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2">
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Tên Lô / Mã Lô</label>
+                        <input type="text" className="w-full p-2 border rounded bg-gray-50 font-bold" value={editingBatch.name} onChange={e => setEditingBatch({...editingBatch, name: e.target.value})} />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Loại / Nhóm Lô (Category)</label>
+                        <div className="flex gap-2">
+                          <select value={editingBatch.category} onChange={e => setEditingBatch({...editingBatch, category: e.target.value})} className="flex-1 p-2 border rounded font-bold text-sm bg-emerald-50 text-emerald-800 border-emerald-200">
+                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
                         </div>
-                      ))}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Tổng SL</label>
+                        <input type="number" className="w-full p-2 border rounded font-bold text-blue-700 bg-blue-50" value={editingBatch.totalItems} onChange={e => setEditingBatch({...editingBatch, totalItems: Number(e.target.value)})} />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Đơn vị</label>
+                        <input type="text" className="w-full p-2 border rounded" value={editingBatch.unit} onChange={e => setEditingBatch({...editingBatch, unit: e.target.value})} />
+                      </div>
+                       <div>
+                         <label className="block text-xs font-bold text-gray-500 mb-1">Quy cách (SL/Hòm)</label>
+                         <input type="number" className="w-full p-2 border rounded" value={editingBatch.itemsPerBox} onChange={e => setEditingBatch({...editingBatch, itemsPerBox: Number(e.target.value)})} />
+                       </div>
+                       <div>
+                         <label className="block text-xs font-bold text-gray-500 mb-1">Tầng xếp (Đáy/Nóc)</label>
+                         <select value={editingBatch.priority} onChange={e => setEditingBatch({...editingBatch, priority: e.target.value})} className={`w-full p-2 border rounded text-xs font-bold ${PRIORITIES[editingBatch.priority].bg} ${PRIORITIES[editingBatch.priority].text}`}>
+                           <option value="HARD">Đáy (Bắt buộc)</option>
+                           <option value="SOFT">Giữa (Ưu tiên)</option>
+                           <option value="NORMAL">Nóc (Thường)</option>
+                         </select>
+                       </div>
                     </div>
 
                     <div>
-                      <div className="flex mb-2 ml-[4px]">
-                        {grid[0].map((_, cIdx) => (
-                          <div key={`x-${cIdx}`} className="w-[120px] text-center text-sm font-bold text-gray-400">
-                            Cột {cIdx + 1}
-                          </div>
+                      <label className="block text-xs font-bold text-gray-500 mb-2">Màu sắc nhận diện</label>
+                      <div className="flex gap-2 flex-wrap">
+                        {BATCH_COLORS.map((color, idx) => (
+                          <button key={idx} onClick={() => setEditingBatch({...editingBatch, colorIdx: idx})} className={`w-8 h-8 rounded-full border-2 transition-transform ${editingBatch.colorIdx === idx ? 'border-gray-900 scale-110 shadow-md' : 'border-transparent'}`} style={{ backgroundColor: color.main }} />
                         ))}
                       </div>
+                    </div>
+                 </div>
 
-                      <div className="grid bg-white box-content shadow-inner" style={{ gridTemplateColumns: `repeat(${config.cols}, 120px)` }}>
-                         {grid.map((row, rIdx) => 
-                           row.map((cell, cIdx) => {
-                             const borderClasses = getCellBorders(rIdx, cIdx);
-                             const groups = analyzeStack(cell.stack);
-                             const isFull = cell.stack.length === config.maxHeight;
-
-                             return (
-                               <div 
-                                 key={`${rIdx}-${cIdx}`}
-                                 className={`w-[120px] h-[80px] relative bg-white flex flex-col ${borderClasses} cursor-pointer group transition-all duration-300 ${groups.length > 0 ? 'hover:bg-slate-50 hover:z-20 hover:shadow-lg' : ''}`}
-                               >
-                                  {groups.length === 0 && (
-                                    <div className="absolute inset-0 flex items-center justify-center opacity-10">
-                                       <div className="w-full h-px bg-black rotate-[33deg] absolute"></div>
-                                       <div className="w-full h-px bg-black -rotate-[33deg] absolute"></div>
-                                    </div>
-                                  )}
-
-                                  {groups.length === 1 && (
-                                     <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 flex flex-col items-center justify-center text-center p-1 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
-                                        <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[groups[0].colorIdx].main }}></div>
-                                        <div className="relative z-10 flex flex-col items-center">
-                                           <div className="font-bold text-[12px] text-gray-900 leading-tight">{groups[0].name}</div>
-                                           <div className={`w-7 h-7 rounded-full border mx-auto mt-0.5 flex flex-col items-center justify-center text-[10px] font-bold shadow-sm ${groups[0].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-400 bg-white'}`}>
-                                              {groups[0].count}
-                                              {groups[0].hasPartial && <span className="text-[6px] leading-[6px] font-black tracking-widest uppercase">Lẻ</span>}
-                                           </div>
-                                        </div>
-                                     </div>
-                                  )}
-
-                                  {groups.length === 2 && (
-                                     <div className="absolute inset-0 overflow-hidden">
-                                        <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
-                                          <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, transparent 49.5%, black 49.5%, black 50.5%, ${BATCH_COLORS[groups[0].colorIdx].main}20 50.5%)` }}></div>
-                                          <div className="absolute top-1 right-2 text-right"><div className="text-[9px] font-bold text-gray-700">{groups[0].name}</div></div>
-                                          <div className={`absolute top-3 right-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[0].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
-                                             {groups[0].count}
-                                             {groups[0].hasPartial && <span className="text-[5px] leading-[5px] uppercase">Lẻ</span>}
-                                          </div>
-                                        </div>
-                                        <div onClick={() => handleBoxClick(groups[1].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[1].id)}`}>
-                                          <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, ${BATCH_COLORS[groups[1].colorIdx].main}20 49.5%, transparent 49.5%)` }}></div>
-                                          <div className="absolute bottom-0.5 left-2 text-left"><div className="text-[9px] font-bold text-gray-700">{groups[1].name}</div></div>
-                                          <div className={`absolute bottom-3 left-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[1].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
-                                             {groups[1].count}
-                                             {groups[1].hasPartial && <span className="text-[5px] leading-[5px] uppercase">Lẻ</span>}
-                                          </div>
-                                        </div>
-                                     </div>
-                                  )}
-
-                                  {groups.length > 2 && groups.map((grp, gIdx) => (
-                                    <div key={gIdx} onClick={() => handleBoxClick(grp.id)} className={`flex-1 w-full flex flex-col items-center justify-center text-center border-b border-dashed border-gray-300 last:border-0 relative transition-opacity ${getGroupOpacity(grp.id)}`} style={{ flexGrow: grp.count }}>
-                                      <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[grp.colorIdx].main }}></div>
-                                      <div className="relative z-10 flex items-center gap-1">
-                                        <div className="font-bold text-[8px] text-gray-900">{grp.name}</div>
-                                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center text-[8px] font-bold ${grp.hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-400 bg-white'}`}>{grp.count}</div>
-                                      </div>
-                                    </div>
-                                  ))}
-
-                                  {cell.stack.length > 0 && (
-                                    <div className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded shadow z-30 opacity-0 group-hover:opacity-100 transition-opacity ${isFull ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
-                                      {cell.stack.length}/{config.maxHeight}
-                                    </div>
-                                  )}
-                               </div>
-                             )
-                           })
-                         )}
-                      </div>
+                 <div className="p-4 bg-gray-50 border-t flex justify-between">
+                    <button onClick={() => removeBatch(editingBatch.id)} className="text-red-600 font-bold text-sm px-4 py-2 hover:bg-red-50 rounded transition-colors">Xóa</button>
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingBatch(null)} className="text-gray-600 font-bold text-sm px-4 py-2 hover:bg-gray-200 rounded transition-colors">Hủy</button>
+                      <button onClick={saveEditedBatch} className="bg-blue-600 text-white font-bold text-sm px-6 py-2 hover:bg-blue-700 rounded shadow transition-colors">Lưu lại</button>
                     </div>
                  </div>
               </div>
             </div>
           )}
 
-          {/* ======== CHẾ ĐỘ 3D ======== */}
-          {viewMode === '3D' && isPacked && (
-            <div 
-               className="w-full h-full min-h-[600px] flex items-center justify-center perspective-container touch-none pb-[100px]"
-               onMouseDown={handlePointerDown}
-               onTouchStart={handlePointerDown}
-            >
-               <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-xs font-medium backdrop-blur pointer-events-none z-10 flex items-center gap-2 shadow-lg">
-                 <MousePointerClick size={14}/> Vuốt để xoay 360° | Bấm hòm để xem chi tiết
-               </div>
+          <div className="flex-1 relative flex flex-col bg-[#e5e7eb] overflow-hidden" onTouchMove={handlePointerMove}>
+            
+            {isPacked && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white rounded-full shadow-md p-1 flex items-center gap-1 z-30">
+                <button onClick={() => setViewMode('2D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '2D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
+                   <LayoutGrid size={14}/> 2D
+                </button>
+                <button onClick={() => setViewMode('3D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '3D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
+                   <Box size={14}/> 3D 360°
+                </button>
+              </div>
+            )}
 
-               <div 
-                 className={`isometric-grid ${isDragging3D ? 'dragging' : ''}`}
-                 style={{ '--rotX': `${rot.x}deg`, '--rotZ': `${rot.z}deg` }}
-               >
-                  {grid.map((row, rIdx) => row.map((_, cIdx) => (
-                      <div key={`floor-${rIdx}-${cIdx}`} className="floor-tile" style={{ transform: `translate3d(${cIdx * 105}px, ${rIdx * 65}px, 0)` }} />
-                  )))}
+            {overflowBoxes.length > 0 && (
+              <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-100 text-red-800 px-4 py-2 rounded-md text-xs font-bold border border-red-300 flex items-center gap-2 shadow-lg z-30">
+                <AlertCircle size={16}/> Sức chứa không đủ! Còn dư {overflowBoxes.length} hòm.
+              </div>
+            )}
 
-                  {grid.map((row, rIdx) => 
-                    row.map((cell, cIdx) => 
-                      cell.stack.map((box, bIdx) => {
-                         const colors = BATCH_COLORS[box.colorIdx];
-                         const isHovered = (hoveredBatchId === box.id || selectedBatch?.id === box.id);
-                         const notHoveredClass = (hoveredBatchId || selectedBatch) && !isHovered ? 'opacity-20 grayscale' : 'opacity-100 cursor-pointer';
-                         
-                         return (
-                           <div 
-                             key={`box-${rIdx}-${cIdx}-${bIdx}`} 
-                             onClick={(e) => { e.stopPropagation(); handleBoxClick(box.id); }}
-                             className={`cube ${notHoveredClass}`}
-                             style={{ 
-                               '--x': `${cIdx * 105}px`, 
-                               '--y': `${rIdx * 65}px`, 
-                               '--z': `${bIdx * 42}px`, 
-                               transform: `translate3d(var(--x), var(--y), var(--z))` 
-                             }}
-                           >
-                              <div className="face bottom" style={{ backgroundColor: colors.main, filter: 'brightness(0.4)' }}></div>
-                              <div className="face back" style={{ backgroundColor: colors.main, filter: 'brightness(0.6)' }}></div>
-                              <div className="face left" style={{ backgroundColor: colors.main, filter: 'brightness(0.7)' }}></div>
-                              <div className="face top flex items-center justify-center" style={{ backgroundColor: colors.top }}>
-                                {box.isPartial && <span className="text-white font-bold opacity-50 text-xs">LẺ</span>}
+            <div className="flex-1 overflow-auto p-4 md:p-8 custom-scrollbar relative">
+              
+              {viewMode === '2D' && isPacked && (
+                <div className="flex justify-center min-w-max min-h-max mt-16 md:mt-0 pb-[100px]">
+                  <div className="bg-white p-8 shadow-2xl relative inline-block transition-all duration-300">
+                     <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2">
+                       <div>
+                          <h2 className="text-xl font-black uppercase tracking-wider text-black">BẢN VẼ MẶT BẰNG KHO</h2>
+                          <div className="text-xs text-gray-600 font-mono mt-1 flex items-center gap-3">
+                             <span>Max: {config.maxHeight} hòm/chồng</span>
+                             <span>|</span>
+                             <span className="text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-bold border border-blue-100">
+                               {config.isManualRouting ? 'Chế độ: Cưỡng chế thủ công' : `AI Đề Xuất: ${autoChosenConfig ? autoChosenConfig.label : ''}`}
+                             </span>
+                          </div>
+                       </div>
+                     </div>
+
+                     <div className="flex relative">
+                        <div className="flex flex-col mr-2 pt-[20px]">
+                          {grid.map((_, rIdx) => (
+                            <div key={`y-${rIdx}`} className="h-[80px] flex items-center justify-end pr-2 text-sm font-bold text-gray-400">
+                              H{rIdx + 1}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div>
+                          <div className="flex mb-2 ml-[4px]">
+                            {grid[0].map((_, cIdx) => (
+                              <div key={`x-${cIdx}`} className="w-[120px] text-center text-sm font-bold text-gray-400">
+                                Cột {cIdx + 1}
                               </div>
-                              <div className="face front flex flex-col items-center justify-center border-l border-white/20" style={{ backgroundColor: colors.main }}>
-                                 <span className={`text-[12px] font-bold ${colors.text} drop-shadow-md leading-none`}>{box.name}</span>
-                                 <span className={`text-[9px] ${colors.text} opacity-80 mt-0.5`}>{box.count} {box.unit}</span>
-                              </div>
-                              <div className="face right border-l border-white/10" style={{ backgroundColor: colors.right }}></div>
-                           </div>
-                         )
-                      })
-                    )
-                  )}
-               </div>
-            </div>
-          )}
+                            ))}
+                          </div>
 
-          {!isPacked && (
-             <div className="h-full opacity-40 flex flex-col items-center justify-center text-gray-500">
-               <LayoutGrid size={80} className="mb-4"/>
-               <p className="font-medium text-lg">Chưa có dữ liệu sơ đồ</p>
-               <p className="text-sm mt-2 text-center max-w-sm">Cấu hình lô và bấm nút Bắt đầu để AI tự tính toán hướng xếp.</p>
-             </div>
-          )}
-        </div>
+                          <div className="grid bg-white box-content shadow-inner" style={{ gridTemplateColumns: `repeat(${config.cols}, 120px)` }}>
+                             {grid.map((row, rIdx) => 
+                               row.map((cell, cIdx) => {
+                                 const borderClasses = getCellBorders(rIdx, cIdx);
+                                 const groups = analyzeStack(cell.stack);
+                                 const isFull = cell.stack.length === config.maxHeight;
 
-        {/* --- POPUP INSPECTOR (XEM CHI TIẾT KHI CLICK VÀO LÔ) --- */}
-        {selectedBatch && (
-          <div className="absolute bottom-0 left-0 w-full bg-white border-t-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] p-4 z-50 animate-fadeIn batch-inspector flex justify-between items-center" style={{ borderColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
-            <div className="flex gap-4 items-center">
-               <div className="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold shadow-md" style={{ backgroundColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
-                  {selectedBatch.name.substring(0, 3)}
-               </div>
-               <div>
-                  <h3 className="font-black text-lg text-gray-900 leading-none mb-1">{selectedBatch.name}</h3>
-                  <div className="flex items-center gap-2">
-                     <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">{selectedBatch.category}</span>
-                     <span className="text-xs font-bold text-gray-500">{selectedBatch.totalItems} {selectedBatch.unit}</span>
-                     <span className="text-xs text-gray-400">({selectedBatch.itemsPerBox} {selectedBatch.unit}/hòm)</span>
+                                 return (
+                                   <div 
+                                     key={`${rIdx}-${cIdx}`}
+                                     className={`w-[120px] h-[80px] relative bg-white flex flex-col ${borderClasses} cursor-pointer group transition-all duration-300 ${groups.length > 0 ? 'hover:bg-slate-50 hover:z-20 hover:shadow-lg' : ''}`}
+                                   >
+                                      {groups.length === 0 && (
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-10">
+                                           <div className="w-full h-px bg-black rotate-[33deg] absolute"></div>
+                                           <div className="w-full h-px bg-black -rotate-[33deg] absolute"></div>
+                                        </div>
+                                      )}
+
+                                      {groups.length === 1 && (
+                                         <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 flex flex-col items-center justify-center text-center p-1 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
+                                            <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[groups[0].colorIdx].main }}></div>
+                                            <div className="relative z-10 flex flex-col items-center">
+                                               <div className="font-bold text-[12px] text-gray-900 leading-tight">{groups[0].name}</div>
+                                               <div className={`w-7 h-7 rounded-full border mx-auto mt-0.5 flex flex-col items-center justify-center text-[10px] font-bold shadow-sm ${groups[0].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-400 bg-white'}`}>
+                                                  {groups[0].count}
+                                                  {groups[0].hasPartial && <span className="text-[6px] leading-[6px] font-black tracking-widest uppercase">Lẻ</span>}
+                                               </div>
+                                            </div>
+                                         </div>
+                                      )}
+
+                                      {groups.length === 2 && (
+                                         <div className="absolute inset-0 overflow-hidden">
+                                            <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
+                                              <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, transparent 49.5%, black 49.5%, black 50.5%, ${BATCH_COLORS[groups[0].colorIdx].main}20 50.5%)` }}></div>
+                                              <div className="absolute top-1 right-2 text-right"><div className="text-[9px] font-bold text-gray-700">{groups[0].name}</div></div>
+                                              <div className={`absolute top-3 right-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[0].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
+                                                 {groups[0].count}
+                                                 {groups[0].hasPartial && <span className="text-[5px] leading-[5px] uppercase">Lẻ</span>}
+                                              </div>
+                                            </div>
+                                            <div onClick={() => handleBoxClick(groups[1].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[1].id)}`}>
+                                              <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, ${BATCH_COLORS[groups[1].colorIdx].main}20 49.5%, transparent 49.5%)` }}></div>
+                                              <div className="absolute bottom-0.5 left-2 text-left"><div className="text-[9px] font-bold text-gray-700">{groups[1].name}</div></div>
+                                              <div className={`absolute bottom-3 left-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[1].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
+                                                 {groups[1].count}
+                                                 {groups[1].hasPartial && <span className="text-[5px] leading-[5px] uppercase">Lẻ</span>}
+                                              </div>
+                                            </div>
+                                         </div>
+                                      )}
+
+                                      {groups.length > 2 && groups.map((grp, gIdx) => (
+                                        <div key={gIdx} onClick={() => handleBoxClick(grp.id)} className={`flex-1 w-full flex flex-col items-center justify-center text-center border-b border-dashed border-gray-300 last:border-0 relative transition-opacity ${getGroupOpacity(grp.id)}`} style={{ flexGrow: grp.count }}>
+                                          <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[grp.colorIdx].main }}></div>
+                                          <div className="relative z-10 flex items-center gap-1">
+                                            <div className="font-bold text-[8px] text-gray-900">{grp.name}</div>
+                                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center text-[8px] font-bold ${grp.hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-400 bg-white'}`}>{grp.count}</div>
+                                          </div>
+                                        </div>
+                                      ))}
+
+                                      {cell.stack.length > 0 && (
+                                        <div className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded shadow z-30 opacity-0 group-hover:opacity-100 transition-opacity ${isFull ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
+                                          {cell.stack.length}/{config.maxHeight}
+                                        </div>
+                                      )}
+                                   </div>
+                                 )
+                               })
+                             )}
+                          </div>
+                        </div>
+                     </div>
                   </div>
-               </div>
+                </div>
+              )}
+
+              {viewMode === '3D' && isPacked && (
+                <div 
+                   className="w-full h-full min-h-[600px] flex items-center justify-center perspective-container touch-none pb-[100px]"
+                   onMouseDown={handlePointerDown}
+                   onTouchStart={handlePointerDown}
+                >
+                   <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-xs font-medium backdrop-blur pointer-events-none z-10 flex items-center gap-2 shadow-lg">
+                     <MousePointerClick size={14}/> Vuốt để xoay 360° | Bấm hòm để xem chi tiết
+                   </div>
+
+                   <div 
+                     className={`isometric-grid ${isDragging3D ? 'dragging' : ''}`}
+                     style={{ '--rotX': `${rot.x}deg`, '--rotZ': `${rot.z}deg` }}
+                   >
+                     {grid.map((row, rIdx) => row.map((_, cIdx) => (
+                         <div key={`floor-${rIdx}-${cIdx}`} className="floor-tile" style={{ transform: `translate3d(${cIdx * 105}px, ${rIdx * 65}px, 0)` }} />
+                     )))}
+
+                     {grid.map((row, rIdx) => 
+                       row.map((cell, cIdx) => 
+                         cell.stack.map((box, bIdx) => {
+                            const colors = BATCH_COLORS[box.colorIdx];
+                            const isHovered = (hoveredBatchId === box.id || selectedBatch?.id === box.id);
+                            const notHoveredClass = (hoveredBatchId || selectedBatch) && !isHovered ? 'opacity-20 grayscale' : 'opacity-100 cursor-pointer';
+                            
+                            return (
+                              <div 
+                                key={`box-${rIdx}-${cIdx}-${bIdx}`} 
+                                onClick={(e) => { e.stopPropagation(); handleBoxClick(box.id); }}
+                                className={`cube ${notHoveredClass}`}
+                                style={{ 
+                                  '--x': `${cIdx * 105}px`, 
+                                  '--y': `${rIdx * 65}px`, 
+                                  '--z': `${bIdx * 42}px`, 
+                                  transform: `translate3d(var(--x), var(--y), var(--z))` 
+                                }}
+                              >
+                                 <div className="face bottom" style={{ backgroundColor: colors.main, filter: 'brightness(0.4)' }}></div>
+                                 <div className="face back" style={{ backgroundColor: colors.main, filter: 'brightness(0.6)' }}></div>
+                                 <div className="face left" style={{ backgroundColor: colors.main, filter: 'brightness(0.7)' }}></div>
+                                 <div className="face top flex items-center justify-center" style={{ backgroundColor: colors.top }}>
+                                   {box.isPartial && <span className="text-white font-bold opacity-50 text-xs">LẺ</span>}
+                                 </div>
+                                 <div className="face front flex flex-col items-center justify-center border-l border-white/20" style={{ backgroundColor: colors.main }}>
+                                    <span className={`text-[12px] font-bold ${colors.text} drop-shadow-md leading-none`}>{box.name}</span>
+                                    <span className={`text-[9px] ${colors.text} opacity-80 mt-0.5`}>{box.count} {box.unit}</span>
+                                 </div>
+                                 <div className="face right border-l border-white/10" style={{ backgroundColor: colors.right }}></div>
+                              </div>
+                            )
+                         })
+                       )
+                     )}
+                   </div>
+                </div>
+              )}
+
+              {!isPacked && (
+                 <div className="h-full opacity-40 flex flex-col items-center justify-center text-gray-500">
+                   <LayoutGrid size={80} className="mb-4"/>
+                   <p className="font-medium text-lg">Chưa có dữ liệu sơ đồ</p>
+                   <p className="text-sm mt-2 text-center max-w-sm">Cấu hình lô và bấm nút Bắt đầu để AI tự tính toán hướng xếp.</p>
+                 </div>
+              )}
             </div>
-            <div className="flex gap-4 items-center">
-               <div className="text-right border-r pr-4 mr-4 hidden md:block">
-                  <div className="text-xs text-gray-500 uppercase font-bold">Phân bổ</div>
-                  <div className="font-black text-sm text-gray-800">{getBreakdownText(selectedBatch.totalItems, selectedBatch.itemsPerBox, selectedBatch.unit)}</div>
-               </div>
-               <button onClick={() => { setSelectedBatch(null); setHoveredBatchId(null); }} className="text-gray-400 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-colors"><X size={20}/></button>
-            </div>
+
+            {selectedBatch && (
+              <div className="absolute bottom-0 left-0 w-full bg-white border-t-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] p-4 z-50 animate-fadeIn batch-inspector flex justify-between items-center" style={{ borderColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
+                <div className="flex gap-4 items-center">
+                   <div className="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold shadow-md" style={{ backgroundColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
+                      {selectedBatch.name.substring(0, 3)}
+                   </div>
+                   <div>
+                      <h3 className="font-black text-lg text-gray-900 leading-none mb-1">{selectedBatch.name}</h3>
+                      <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">{selectedBatch.category}</span>
+                         <span className="text-xs font-bold text-gray-500">{selectedBatch.totalItems} {selectedBatch.unit}</span>
+                         <span className="text-xs text-gray-400">({selectedBatch.itemsPerBox} {selectedBatch.unit}/hòm)</span>
+                      </div>
+                   </div>
+                </div>
+                <div className="flex gap-4 items-center">
+                   <div className="text-right border-r pr-4 mr-4 hidden md:block">
+                      <div className="text-xs text-gray-500 uppercase font-bold">Phân bổ</div>
+                      <div className="font-black text-sm text-gray-800">{getBreakdownText(selectedBatch.totalItems, selectedBatch.itemsPerBox, selectedBatch.unit)}</div>
+                   </div>
+                   <button onClick={() => { setSelectedBatch(null); setHoveredBatchId(null); }} className="text-gray-400 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-colors"><X size={20}/></button>
+                </div>
+              </div>
+            )}
+
           </div>
-        )}
 
-      </div>
+          <style dangerouslySetInnerHTML={{__html: `
+            .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+            .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+            .animate-fadeIn { animation: fadeIn 0.2s ease-out forwards; }
+            
+            /* 3D Styles - KHỐI CHỮ NHẬT W=100, D=60, H=40 CÓ FULL 6 MẶT */
+            .perspective-container { perspective: 2500px; overflow: hidden; }
+            .isometric-grid {
+               position: relative; transform-style: preserve-3d;
+               transform: rotateX(var(--rotX)) rotateZ(var(--rotZ)) translate3d(-150px, 100px, -150px);
+            }
+            .isometric-grid:not(.dragging) { transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); }
+            .isometric-grid.dragging { transition: none; } 
 
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.2s ease-out forwards; }
-        
-        /* 3D Styles - KHỐI CHỮ NHẬT W=100, D=60, H=40 CÓ FULL 6 MẶT */
-        .perspective-container { perspective: 2500px; overflow: hidden; }
-        .isometric-grid {
-           position: relative; transform-style: preserve-3d;
-           transform: rotateX(var(--rotX)) rotateZ(var(--rotZ)) translate3d(-150px, 100px, -150px);
-        }
-        .isometric-grid:not(.dragging) { transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); }
-        .isometric-grid.dragging { transition: none; } 
+            .floor-tile {
+               position: absolute; width: 100px; height: 60px;
+               background: rgba(0, 0, 0, 0.03); border: 1px dashed rgba(0, 0, 0, 0.15);
+               transform-style: preserve-3d;
+            }
+            .cube {
+               position: absolute; width: 100px; height: 60px; transform-style: preserve-3d;
+               transition: transform 0.2s ease-out, opacity 0.3s ease;
+            }
+            .cube:hover { transform: translate3d(var(--x), var(--y), calc(var(--z) + 5px)) !important; }
+            .face { position: absolute; box-sizing: border-box; border: 1px solid rgba(0,0,0,0.15); }
+            
+            /* Cấu trúc 6 mặt của khối 100 x 60 x 40 */
+            .bottom { width: 100px; height: 60px; transform: translateZ(0); }
+            .top    { width: 100px; height: 60px; transform: translateZ(40px); }
+            .back   { width: 100px; height: 40px; transform-origin: top left; transform: translate3d(0, 0, 40px) rotateX(-90deg); }
+            .front  { width: 100px; height: 40px; transform-origin: top left; transform: translate3d(0, 60px, 40px) rotateX(-90deg); }
+            .left   { width: 60px; height: 40px; transform-origin: top left; transform: translate3d(0, 0, 40px) rotateZ(90deg) rotateX(-90deg); }
+            .right  { width: 60px; height: 40px; transform-origin: top left; transform: translate3d(100px, 0, 40px) rotateZ(90deg) rotateX(-90deg); }
+          `}} />
+        </div>
+      );
+    }
 
-        .floor-tile {
-           position: absolute; width: 100px; height: 60px;
-           background: rgba(0, 0, 0, 0.03); border: 1px dashed rgba(0, 0, 0, 0.15);
-           transform-style: preserve-3d;
-        }
-        .cube {
-           position: absolute; width: 100px; height: 60px; transform-style: preserve-3d;
-           transition: transform 0.2s ease-out, opacity 0.3s ease;
-        }
-        .cube:hover { transform: translate3d(var(--x), var(--y), calc(var(--z) + 5px)) !important; }
-        .face { position: absolute; box-sizing: border-box; border: 1px solid rgba(0,0,0,0.15); }
-        
-        /* Cấu trúc 6 mặt của khối 100 x 60 x 40 */
-        .bottom { width: 100px; height: 60px; transform: translateZ(0); }
-        .top    { width: 100px; height: 60px; transform: translateZ(40px); }
-        .back   { width: 100px; height: 40px; transform-origin: top left; transform: translate3d(0, 0, 40px) rotateX(-90deg); }
-        .front  { width: 100px; height: 40px; transform-origin: top left; transform: translate3d(0, 60px, 40px) rotateX(-90deg); }
-        .left   { width: 60px; height: 40px; transform-origin: top left; transform: translate3d(0, 0, 40px) rotateZ(90deg) rotateX(-90deg); }
-        .right  { width: 60px; height: 40px; transform-origin: top left; transform: translate3d(100px, 0, 40px) rotateZ(90deg) rotateX(-90deg); }
-      `}} />
-    </div>
-  );
-}
+    // Render Component ra DOM
+    const root = createRoot(document.getElementById('root'));
+    root.render(<SmartPackingApp />);
+  </script>
+</body>
+</html>
