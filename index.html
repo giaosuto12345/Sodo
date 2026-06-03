@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, FileSpreadsheet, UploadCloud, TableProperties, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, FileSpreadsheet, UploadCloud, TableProperties, RefreshCw, Save, Download, Upload, MousePointerClick, ChevronRight } from 'lucide-react';
 
 // --- HẰNG SỐ & MÀU SẮC ---
 const PRIORITIES = {
-  HARD: { id: 'HARD', label: '1. Bắt buộc (Đáy)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-500' },
-  SOFT: { id: 'SOFT', label: '2. Ưu tiên (Giữa)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-500' },
-  NORMAL: { id: 'NORMAL', label: '3. Thường (Nóc)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-500' }
+  HARD: { id: 'HARD', label: '1. Đáy', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-500' },
+  SOFT: { id: 'SOFT', label: '2. Giữa', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-500' },
+  NORMAL: { id: 'NORMAL', label: '3. Nóc', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-500' }
 };
 
 const BATCH_COLORS = [
@@ -18,9 +18,55 @@ const BATCH_COLORS = [
   { main: '#14B8A6', top: '#2DD4BF', right: '#0D9488', text: 'text-white' }, 
 ];
 
+const CATEGORIES = ['Đạn thẳng', 'Đạn cối', 'Vật liệu nổ', 'Khác'];
+
+// Key lưu trữ LocalStorage
+const STORAGE_KEY = 'wms_smartpacking_data_v14';
+
 export default function SmartPackingApp() {
-  // Tải thư viện Excel (SheetJS) ngầm khi mở ứng dụng
+  // --- STATE KHỞI TẠO (Load từ LocalStorage nếu có) ---
+  const [activeTab, setActiveTab] = useState('batches');
+  const [viewMode, setViewMode] = useState('3D');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
+  
+  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+  const [editingBatch, setEditingBatch] = useState(null);
+  
+  // Trạng thái Click/Hover để xem chi tiết trên sơ đồ
+  const [hoveredBatchId, setHoveredBatchId] = useState(null);
+  const [selectedBatch, setSelectedBatch] = useState(null);
+
+  // Cấu hình không gian
+  const [config, setConfig] = useState({
+    rows: 4, cols: 6, maxHeight: 10, defaultItemsPerBox: 2,
+    isManualRouting: false, fillAxis: 'col', fillDirection: 'ltr', isSnakeRouting: true
+  });
+  const [autoChosenConfig, setAutoChosenConfig] = useState(null);
+
+  // Danh sách lô mặc định có Category
+  const [batches, setBatches] = useState([
+    { id: 'L01', name: 'Đạn CX57', category: 'Đạn thẳng', totalItems: 48, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 0 },
+    { id: 'L02', name: 'Đạn C60', category: 'Đạn cối', totalItems: 36, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 1 },
+    { id: 'L03', name: 'Đạn L X', category: 'Vật liệu nổ', totalItems: 15, itemsPerBox: 2, unit: 'thân', priority: 'NORMAL', colorIdx: 2 },
+  ]);
+
+  const [grid, setGrid] = useState([]);
+  const [overflowBoxes, setOverflowBoxes] = useState([]);
+  const [isPacked, setIsPacked] = useState(false);
+
+  // --- LOCAL STORAGE & BACKUP ---
   useEffect(() => {
+    // Chỉ chạy lần đầu khi mount
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    if (savedData) {
+      try {
+        const parsed = JSON.parse(savedData);
+        if (parsed.config) setConfig(parsed.config);
+        if (parsed.batches) setBatches(parsed.batches);
+      } catch (e) { console.error("Lỗi đọc dữ liệu lưu trữ", e); }
+    }
+    
+    // Tải thư viện Excel ngầm
     if (typeof window !== 'undefined' && !window.XLSX) {
       const script = document.createElement('script');
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -29,56 +75,31 @@ export default function SmartPackingApp() {
     }
   }, []);
 
-  const [activeTab, setActiveTab] = useState('batches');
-  const [viewMode, setViewMode] = useState('3D');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  
-  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
-  const [editingBatch, setEditingBatch] = useState(null);
-  const [hoveredBatchId, setHoveredBatchId] = useState(null);
-  
-  // Trạng thái cho Excel Modal
-  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
-  const [excelState, setExcelState] = useState({
-    file: null,
-    workbook: null,
-    sheets: [],
-    selectedSheet: '',
-    headers: [],
-    data: [],
-    mapping: { name: '', quantity: '', unit: '', itemsPerBox: '' }
-  });
-
-  // 3D Camera Controls
-  const [rot, setRot] = useState({ x: 60, z: -45 });
-  const [isDragging3D, setIsDragging3D] = useState(false);
-  const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, rotX: 0, rotZ: 0 });
-
-  // Cấu hình không gian & Hướng xếp
-  const [config, setConfig] = useState({
-    rows: 4, cols: 6, maxHeight: 10, defaultItemsPerBox: 2,
-    isManualRouting: false, fillAxis: 'col', fillDirection: 'ltr', isSnakeRouting: true
-  });
-  const [autoChosenConfig, setAutoChosenConfig] = useState(null);
-
-  const [batches, setBatches] = useState([
-    { id: 'L01', name: 'Đạn CX57', totalItems: 48, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 0 },
-    { id: 'L02', name: 'Đạn C60', totalItems: 36, itemsPerBox: 2, unit: 'thân', priority: 'HARD', colorIdx: 1 },
-    { id: 'L03', name: 'Đạn L X', totalItems: 15, itemsPerBox: 2, unit: 'thân', priority: 'NORMAL', colorIdx: 2 },
-  ]);
-
-  const [grid, setGrid] = useState([]);
-  const [overflowBoxes, setOverflowBoxes] = useState([]);
-  const [isPacked, setIsPacked] = useState(false);
-
+  // Lưu tự động mỗi khi Batches hoặc Config thay đổi
   useEffect(() => {
-    const handleResize = () => { if (window.innerWidth < 768) setIsSidebarOpen(false); else setIsSidebarOpen(true); };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ config, batches }));
+  }, [config, batches]);
+
+  // Handle Resize & Swipe Gestures cho iPhone
+  const touchStartX = useRef(null);
+  
+  useEffect(() => {
+    const handleResize = () => setIsSidebarOpen(window.innerWidth >= 768);
     window.addEventListener('resize', handleResize);
-    handleResize();
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // --- THUẬT TOÁN ĐIỀU PHỐI (ZICZAC & CẮT NGANG) ---
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartX.current - touchEndX;
+    if (diff > 50 && isSidebarOpen) setIsSidebarOpen(false); // Vuốt trái -> Đóng
+    if (diff < -50 && !isSidebarOpen && touchStartX.current < 30) setIsSidebarOpen(true); // Vuốt phải từ mép -> Mở
+    touchStartX.current = null;
+  };
+
+  // --- THUẬT TOÁN ĐIỀU PHỐI (CÓ XỬ LÝ CATEGORY) ---
   const generateRoute = (rows, cols, axis, direction, isSnake) => {
     const route = [];
     if (axis === 'col') {
@@ -137,11 +158,21 @@ export default function SmartPackingApp() {
       batchBoxes.forEach(box => allBoxes.push(box));
     });
 
+    // LUẬT SORTING MỚI: 1. Category -> 2. Priority -> 3. User Order
+    // Đảm bảo các Lô cùng Loại luôn đi liền nhau, dập tắt nguy cơ Xen Lô (Sandwiching)
     const priorityWeight = { 'HARD': 3, 'SOFT': 2, 'NORMAL': 1 };
     const orderedBatchIds = batches.map(b => b.id);
+    const orderedCategories = [...new Set(batches.map(b => b.category))];
+
     allBoxes.sort((a, b) => {
-      if (priorityWeight[a.priority] !== priorityWeight[b.priority]) return priorityWeight[b.priority] - priorityWeight[a.priority];
-      return orderedBatchIds.indexOf(a.id) - orderedBatchIds.indexOf(b.id);
+      const catA = orderedCategories.indexOf(a.category);
+      const catB = orderedCategories.indexOf(b.category);
+      if (catA !== catB) return catA - catB; // Gom nhóm theo Loại
+
+      if (priorityWeight[a.priority] !== priorityWeight[b.priority]) {
+        return priorityWeight[b.priority] - priorityWeight[a.priority]; // Gom theo Ưu tiên
+      }
+      return orderedBatchIds.indexOf(a.id) - orderedBatchIds.indexOf(b.id); // Cuối cùng theo thứ tự tay kéo
     });
 
     let finalGrid, finalOverflow;
@@ -182,7 +213,7 @@ export default function SmartPackingApp() {
         });
         
         Object.values(batchBounds).forEach(b => {
-          score += (b.maxR - b.minR + 1) + (b.maxC - b.minC + 1); 
+          score += (b.maxR - b.minR + 1) + (b.maxC - b.minC + 1); // Tính chu vi độ dẹt
         });
 
         if (score < bestScore) {
@@ -192,7 +223,7 @@ export default function SmartPackingApp() {
       finalGrid = bestResult.grid; finalOverflow = bestResult.overflow; setAutoChosenConfig(bestScenario);
     }
 
-    setGrid(finalGrid); setOverflowBoxes(finalOverflow); setIsPacked(true);
+    setGrid(finalGrid); setOverflowBoxes(finalOverflow); setIsPacked(true); setSelectedBatch(null);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
@@ -214,7 +245,7 @@ export default function SmartPackingApp() {
 
   const addBatch = () => {
     const newId = `L0${Date.now()}`;
-    setBatches([...batches, { id: newId, name: `Lô Mới`, totalItems: 20, itemsPerBox: config.defaultItemsPerBox, unit: 'thân', priority: 'NORMAL', colorIdx: batches.length % BATCH_COLORS.length }]);
+    setBatches([...batches, { id: newId, name: `Lô Mới`, category: 'Khác', totalItems: 20, itemsPerBox: config.defaultItemsPerBox, unit: 'thân', priority: 'NORMAL', colorIdx: batches.length % BATCH_COLORS.length }]);
   };
   const removeBatch = (idToRemove) => { setBatches(batches.filter(b => b.id !== idToRemove)); setEditingBatch(null); };
   const saveEditedBatch = () => { setBatches(batches.map(b => b.id === editingBatch.id ? editingBatch : b)); setEditingBatch(null); };
@@ -223,117 +254,50 @@ export default function SmartPackingApp() {
     const full = Math.floor(total / perBox);
     const partial = total % perBox;
     if (partial === 0) return `(${full} hòm chẵn)`;
-    return `(${full} hòm chẵn + 1 hòm lẻ (${partial} ${unit}))`;
+    return `(${full} chẵn + 1 lẻ (${partial} ${unit}))`;
   };
 
-  // --- XỬ LÝ NHẬP EXCEL (MỚI) ---
-  const handleFileUpload = (e) => {
+  // --- SAO LƯU, PHỤC HỒI & CẬP NHẬT ---
+  const handleBackup = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ config, batches }));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `wms_backup_${new Date().toISOString().slice(0,10)}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleRestore = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!window.XLSX) {
-      alert("Thư viện xử lý Excel đang được tải. Vui lòng đợi vài giây và thử lại!");
-      return;
-    }
-
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target.result;
-        const wb = window.XLSX.read(bstr, { type: 'binary' });
-        const firstSheetName = wb.SheetNames[0];
-        setExcelState(prev => ({ 
-          ...prev, 
-          file, 
-          workbook: wb, 
-          sheets: wb.SheetNames, 
-          selectedSheet: firstSheetName 
-        }));
-      } catch (err) {
-        alert("Lỗi đọc file Excel. File có thể bị hỏng hoặc có mật khẩu.");
-        console.error(err);
-      }
+        const parsed = JSON.parse(evt.target.result);
+        if (parsed.config && parsed.batches) {
+          setConfig(parsed.config); setBatches(parsed.batches);
+          alert("Phục hồi dữ liệu thành công!");
+        } else alert("File backup không hợp lệ.");
+      } catch (err) { alert("Lỗi đọc file backup."); }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsText(file);
   };
 
-  // Trigger khi người dùng đổi Sheet
-  useEffect(() => {
-    if (excelState.workbook && excelState.selectedSheet) {
-      const ws = excelState.workbook.Sheets[excelState.selectedSheet];
-      const jsonData = window.XLSX.utils.sheet_to_json(ws, { header: 1 }); // Đọc theo mảng 2 chiều
-      
-      // Tìm dòng Tiêu đề (Dòng đầu tiên có chứa text dạng cột)
-      let headerRowIdx = 0;
-      for (let i = 0; i < Math.min(10, jsonData.length); i++) {
-        if (jsonData[i] && jsonData[i].length > 1 && typeof jsonData[i][0] === 'string') {
-          headerRowIdx = i; break;
-        }
-      }
-      
-      const headers = jsonData[headerRowIdx] || [];
-      const dataRows = jsonData.slice(headerRowIdx + 1).filter(r => r.length > 0 && r[0] !== undefined);
-      
-      // AI Tự động Nhận diện cột dựa trên Keywords (Fuzzy Mapping)
-      let map = { name: '', quantity: '', unit: '', itemsPerBox: '' };
-      headers.forEach(h => {
-        if (!h) return;
-        const lower = h.toString().toLowerCase();
-        
-        if (!map.name && /(lô|tên|mã|lo|ten|ma|sản phẩm|sp)/.test(lower)) map.name = h;
-        else if (!map.quantity && /(sl|số lượng|tổng|so luong|tong|qty|quantity)/.test(lower)) map.quantity = h;
-        else if (!map.unit && /(đvt|đơn vị|don vi|dvt|unit)/.test(lower)) map.unit = h;
-        else if (!map.itemsPerBox && /(quy cách|hòm|đóng gói|quy cach|hom)/.test(lower)) map.itemsPerBox = h;
-      });
-
-      setExcelState(prev => ({ ...prev, headers, data: dataRows, mapping: map }));
-    }
-  }, [excelState.workbook, excelState.selectedSheet]);
-
-  const processExcelImport = () => {
-    const { headers, data, mapping } = excelState;
-    if (!mapping.name || !mapping.quantity) {
-      return alert("Hệ thống không tự nhận diện được cột. Vui lòng chọn thủ công cột Tên Lô và Số Lượng ở mục Ghép Cột!");
-    }
-    
-    const nameIdx = headers.indexOf(mapping.name);
-    const qtyIdx = headers.indexOf(mapping.quantity);
-    const unitIdx = headers.indexOf(mapping.unit);
-    const boxIdx = headers.indexOf(mapping.itemsPerBox);
-
-    const newBatches = [...batches];
-    let count = 0;
-    
-    data.forEach(row => {
-      const name = row[nameIdx];
-      const qtyRaw = row[qtyIdx];
-      const qty = parseInt(qtyRaw);
-      
-      if (name && !isNaN(qty) && qty > 0) {
-        newBatches.push({
-          id: `L_${Date.now()}_${count}`,
-          name: name.toString().trim(),
-          totalItems: qty,
-          unit: unitIdx >= 0 && row[unitIdx] ? row[unitIdx].toString().trim() : 'thân',
-          itemsPerBox: boxIdx >= 0 && parseInt(row[boxIdx]) ? parseInt(row[boxIdx]) : config.defaultItemsPerBox,
-          priority: 'NORMAL',
-          colorIdx: newBatches.length % BATCH_COLORS.length
-        });
-        count++;
-      }
-    });
-
-    if (count > 0) {
-      setBatches(newBatches);
-      setIsExcelModalOpen(false);
-      setExcelState({ file: null, workbook: null, sheets: [], selectedSheet: '', headers: [], data: [], mapping: { name: '', quantity: '', unit: '', itemsPerBox: '' } });
-      alert(`Đã nạp thành công ${count} lô từ File Excel!`);
-    } else {
-      alert("Không tìm thấy dữ liệu hợp lệ nào. Bạn hãy kiểm tra lại file Excel.");
+  const handleForceUpdate = () => {
+    if (window.confirm("Thao tác này sẽ tải lại bộ code mới nhất từ máy chủ (Bảo toàn dữ liệu hiện tại). Bạn có muốn tiếp tục?")) {
+      window.location.reload(true);
     }
   };
 
+  // --- XỬ LÝ CLICK SƠ ĐỒ (INSPECT) ---
+  const handleBoxClick = (batchId) => {
+    setHoveredBatchId(batchId);
+    const b = batches.find(x => x.id === batchId);
+    if(b) setSelectedBatch(b);
+  };
 
-  // --- HỖ TRỢ BẢN VẼ (PHÁT HIỆN HÒM LẺ) ---
+  // --- BẢN VẼ 2D ---
   const analyzeStack = (stack) => {
     if (stack.length === 0) return [];
     const groups = [];
@@ -343,13 +307,10 @@ export default function SmartPackingApp() {
 
     stack.forEach(box => {
       if (box.id === currentBatch) {
-        count++;
-        if (box.isPartial) hasPartial = true;
+        count++; if (box.isPartial) hasPartial = true;
       } else {
         groups.push({ ...stack[count-1], count, hasPartial });
-        currentBatch = box.id; 
-        count = 1;
-        hasPartial = box.isPartial;
+        currentBatch = box.id; count = 1; hasPartial = box.isPartial;
       }
     });
     groups.push({ ...stack[stack.length-1], count, hasPartial });
@@ -376,16 +337,20 @@ export default function SmartPackingApp() {
 
   const getGroupOpacity = (groupId) => {
     if (!hoveredBatchId) return 'opacity-100'; 
-    return hoveredBatchId === groupId ? 'opacity-100' : 'opacity-20 grayscale';
+    return hoveredBatchId === groupId ? 'opacity-100 ring-2 ring-blue-500 z-50' : 'opacity-20 grayscale';
   };
 
-  // --- DRAG TO ROTATE CAMERA 3D ---
+  // --- CAMERA 3D ---
+  const [rot, setRot] = useState({ x: 60, z: -45 });
+  const [isDragging3D, setIsDragging3D] = useState(false);
+  const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, rotX: 0, rotZ: 0 });
+
   const getClientXY = (e) => {
     if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
     return { x: e.clientX, y: e.clientY };
   };
   const handlePointerDown = (e) => {
-    if(e.target.closest('button')) return; 
+    if(e.target.closest('button') || e.target.closest('.batch-inspector')) return; 
     setIsDragging3D(true);
     const { x, y } = getClientXY(e);
     setDragStart({ mouseX: x, mouseY: y, rotX: rot.x, rotZ: rot.z });
@@ -402,43 +367,29 @@ export default function SmartPackingApp() {
   };
   const handlePointerUp = () => setIsDragging3D(false);
 
-  // DRAG KÉO THẢ MẶT BẰNG 2D
-  const handleDragStartGrid = (e, rIdx, cIdx) => { e.dataTransfer.setData('text/gridPos', JSON.stringify({ rIdx, cIdx })); e.currentTarget.style.opacity = '0.5'; };
-  const handleDragEndGrid = (e) => { e.currentTarget.style.opacity = '1'; };
-  const handleDragOverGrid = (e) => { e.preventDefault(); };
-  const handleDropGrid = (e, targetR, targetC) => {
-    e.preventDefault();
-    const dataStr = e.dataTransfer.getData('text/gridPos');
-    if (!dataStr) return;
-    const { rIdx: sourceR, cIdx: sourceC } = JSON.parse(dataStr);
-    if (sourceR === targetR && sourceC === targetC) return;
-    const newGrid = [...grid];
-    const sourceStack = newGrid[sourceR][sourceC].stack;
-    const targetStack = newGrid[targetR][targetC].stack;
-    if (sourceStack.length > 0 && targetStack.length < config.maxHeight) {
-      targetStack.push(sourceStack.pop());
-      setGrid(newGrid);
-    } else if (targetStack.length >= config.maxHeight) {
-      alert(`Chồng này đã đạt tối đa ${config.maxHeight} hòm!`);
-    }
-  };
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans overflow-hidden relative" onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp} onTouchEnd={handlePointerUp}>
+    <div 
+      className="flex h-screen bg-gray-100 font-sans overflow-hidden relative" 
+      onTouchStart={handleTouchStart} 
+      onTouchEnd={handleTouchEnd}
+      onMouseUp={handlePointerUp} 
+      onMouseLeave={handlePointerUp}
+    >
       
       <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden absolute top-4 left-4 z-50 p-2 bg-slate-900 text-white rounded-md shadow-lg">
         {isSidebarOpen ? <X size={20}/> : <Menu size={20}/>}
       </button>
 
-      {/* --- SIDEBAR TRÁI --- */}
-      <div className={`absolute md:relative z-40 w-[360px] md:w-[420px] h-full bg-white border-r border-gray-200 flex flex-col shadow-2xl md:shadow-lg transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+      {/* --- CỘT TRÁI (SIDEBAR) --- */}
+      <div className={`absolute md:relative z-40 w-[360px] md:w-[420px] h-full bg-white border-r border-gray-200 flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.1)] md:shadow-lg transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <Layers className="text-emerald-400" />
             <div>
-              <h1 className="font-bold text-lg leading-tight">WMS Optimizer V13</h1>
-              <p className="text-[10px] text-slate-400">Settings & Auto-Refresh</p>
+              <h1 className="font-bold text-lg leading-tight">WMS Optimizer V14</h1>
+              <p className="text-[10px] text-slate-400">PWA, Gestures & Category Grouping</p>
             </div>
           </div>
           <button className="md:hidden text-gray-400" onClick={() => setIsSidebarOpen(false)}><X size={20}/></button>
@@ -446,20 +397,17 @@ export default function SmartPackingApp() {
 
         <div className="flex border-b shrink-0 bg-gray-50">
           <button onClick={() => setActiveTab('batches')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'batches' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Danh sách Lô</button>
-          <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Cài đặt & Thuật toán</button>
+          <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Cài đặt & App</button>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-gray-50/30">
           
-          {/* TAB CẤU HÌNH */}
+          {/* TAB CẤU HÌNH & APP */}
           {activeTab === 'config' && (
-            <div className="p-4 space-y-4 animate-fadeIn">
+            <div className="p-4 space-y-4 animate-fadeIn pb-20">
               
               {/* NÚT LƯU & CẬP NHẬT NHANH */}
-              <button 
-                onClick={runSmartPacking} 
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform active:scale-95"
-              >
+              <button onClick={runSmartPacking} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform active:scale-95">
                 <RefreshCw size={16}/> Cập nhật sơ đồ mới
               </button>
 
@@ -486,7 +434,7 @@ export default function SmartPackingApp() {
                 <button onClick={() => setConfig({...config, isManualRouting: !config.isManualRouting})} className={`w-full flex items-center justify-between p-3 rounded border-2 mb-3 transition-colors ${config.isManualRouting ? 'border-orange-500 bg-orange-50 text-orange-800' : 'border-blue-500 bg-blue-50 text-blue-800'}`}>
                   <div className="flex flex-col text-left">
                     <span className="font-bold text-sm">{config.isManualRouting ? 'Chế độ Thủ Công' : 'AI Tự Động Tối Ưu'}</span>
-                    <span className="text-[10px]">{config.isManualRouting ? 'Ép xếp theo hướng bạn chọn' : 'AI tự tìm hướng xếp vuông vức nhất'}</span>
+                    <span className="text-[10px]">{config.isManualRouting ? 'Ép xếp theo hướng bạn chọn' : 'AI tự tìm hướng vuông vức nhất'}</span>
                   </div>
                   {config.isManualRouting ? <CheckSquare size={20} className="text-orange-500"/> : <Activity size={20} className="text-blue-500"/>}
                 </button>
@@ -507,16 +455,24 @@ export default function SmartPackingApp() {
                         <button onClick={() => setConfig({...config, fillAxis: 'row'})} className={`flex-1 flex flex-col items-center justify-center py-2 rounded border text-[11px] font-bold transition-colors ${config.fillAxis === 'row' ? 'bg-orange-600 border-orange-700 text-white shadow-inner' : 'bg-white text-gray-500'}`}><ArrowRight size={14}/> Xếp theo ngang</button>
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Hướng rải</label>
-                      <div className="flex bg-gray-200 p-1 rounded">
-                        <button onClick={() => setConfig({...config, fillDirection: 'ltr'})} className={`flex-1 py-1.5 text-[11px] font-bold rounded flex items-center justify-center gap-1 ${config.fillDirection === 'ltr' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}><ArrowRight size={12}/> Trái {'>'} Phải</button>
-                        <button onClick={() => setConfig({...config, fillDirection: 'rtl'})} className={`flex-1 py-1.5 text-[11px] font-bold rounded flex items-center justify-center gap-1 ${config.fillDirection === 'rtl' ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}><ArrowLeft size={12}/> Phải {'<'} Trái</button>
-                      </div>
-                    </div>
                   </div>
                 )}
               </div>
+
+              <div className="bg-slate-50 p-3 rounded border shadow-sm">
+                <h3 className="text-xs font-bold text-slate-800 uppercase mb-3 border-b border-slate-200 pb-1">⚙️ Hệ thống & Dữ liệu</h3>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button onClick={handleBackup} className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700"><Download size={16}/> Sao lưu (Export)</button>
+                  <label className="flex flex-col items-center justify-center bg-white border border-gray-200 p-2 rounded hover:bg-gray-50 gap-1 text-[11px] font-bold text-gray-700 cursor-pointer">
+                    <Upload size={16}/> Phục hồi (Import)
+                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                  </label>
+                </div>
+                <button onClick={handleForceUpdate} className="w-full flex items-center justify-center bg-emerald-100 text-emerald-800 border border-emerald-300 p-2 rounded hover:bg-emerald-200 gap-2 text-xs font-bold transition-colors">
+                  <UploadCloud size={16}/> Cập nhật App (Xóa Cache)
+                </button>
+              </div>
+
             </div>
           )}
 
@@ -524,20 +480,18 @@ export default function SmartPackingApp() {
           {activeTab === 'batches' && (
             <div className="flex flex-col min-h-full">
               
-              <div className="p-3 bg-white border-b flex justify-between items-center shrink-0 shadow-sm z-10">
-                 <button onClick={() => setIsExcelModalOpen(true)} className="flex items-center gap-1 text-green-700 text-xs font-bold bg-green-100 hover:bg-green-200 px-3 py-1.5 rounded transition-colors border border-green-300 shadow-sm">
-                    <FileSpreadsheet size={14}/> Nhập File Excel
-                 </button>
+              <div className="p-3 bg-white border-b flex justify-between items-center shrink-0 shadow-sm z-10 sticky top-0">
                  <button onClick={addBatch} className="flex items-center gap-1 text-white text-xs font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded shadow transition-colors">
                     <Plus size={14}/> Thêm Lô
                  </button>
+                 <span className="text-[10px] text-gray-400 italic">Tự động lưu...</span>
               </div>
 
               <div className="px-3 pt-3 text-[10px] text-gray-500 uppercase font-bold tracking-wider leading-tight">
-                 Kéo <GripVertical size={12} className="inline text-gray-800"/> để ưu tiên xếp trước (trong cùng nhóm)
+                 Kéo <GripVertical size={12} className="inline text-gray-800"/> để ưu tiên xếp trước (Trong cùng nhóm Loại)
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2 space-y-2 pb-20 mt-1">
+              <div className="flex-1 overflow-y-auto p-2 space-y-2 pb-24 mt-1">
                 {batches.map((batch, idx) => (
                   <div 
                     key={batch.id} 
@@ -547,16 +501,17 @@ export default function SmartPackingApp() {
                     onDragEnd={handleDragEndList}
                     onMouseEnter={() => setHoveredBatchId(batch.id)}
                     onMouseLeave={() => setHoveredBatchId(null)}
-                    className={`flex flex-col border rounded shadow-sm bg-white hover:border-blue-400 transition-all ${draggedItemIndex === idx ? 'opacity-40 scale-95' : 'border-gray-200'} ${hoveredBatchId === batch.id ? 'ring-2 ring-blue-400 -translate-y-0.5' : ''}`}
+                    onClick={() => handleBoxClick(batch.id)}
+                    className={`flex flex-col border rounded shadow-sm bg-white hover:border-blue-400 transition-all cursor-pointer ${draggedItemIndex === idx ? 'opacity-40 scale-95' : 'border-gray-200'} ${(hoveredBatchId === batch.id || selectedBatch?.id === batch.id) ? 'ring-2 ring-blue-400 -translate-y-0.5' : ''}`}
                   >
-                     <div className="flex items-stretch h-14">
+                     <div className="flex items-stretch h-[60px]">
                        <div className="w-8 flex items-center justify-center cursor-move text-gray-400 hover:text-gray-800 bg-gray-50 rounded-l border-r border-gray-100 shrink-0">
                           <GripHorizontal size={14} className="rotate-90"/>
                        </div>
                        <div className="w-1.5 shrink-0 transition-colors" style={{ backgroundColor: BATCH_COLORS[batch.colorIdx].main }}></div>
                        
                        <div className="flex-1 p-2 min-w-0 flex flex-col justify-center">
-                          <div className="flex justify-between items-center mb-0.5 gap-2">
+                          <div className="flex justify-between items-center gap-2">
                              <div className="flex items-baseline gap-1 truncate">
                                <span className="font-bold text-gray-900 text-[13px]">{batch.name}:</span>
                                <span className="font-bold text-blue-700 text-[13px]">{batch.totalItems} {batch.unit}</span>
@@ -565,13 +520,14 @@ export default function SmartPackingApp() {
                                {PRIORITIES[batch.priority].label.split(' ')[1]}
                              </div>
                           </div>
-                          <div className="text-[11px] text-gray-500 font-medium truncate">
-                             {getBreakdownText(batch.totalItems, batch.itemsPerBox, batch.unit)}
+                          <div className="flex justify-between items-center mt-0.5">
+                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1 rounded truncate max-w-[100px]">{batch.category}</span>
+                             <span className="text-[10px] text-gray-500 font-medium truncate">{getBreakdownText(batch.totalItems, batch.itemsPerBox, batch.unit)}</span>
                           </div>
                        </div>
 
                        <button 
-                         onClick={() => setEditingBatch({...batch})}
+                         onClick={(e) => { e.stopPropagation(); setEditingBatch({...batch}); }}
                          className="w-10 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors shrink-0 rounded-r border-l border-gray-100"
                        >
                          <Settings size={16} />
@@ -584,200 +540,51 @@ export default function SmartPackingApp() {
           )}
         </div>
 
-        <div className="p-4 border-t border-gray-200 bg-white shrink-0 z-20">
+        {/* NÚT CHẠY THUẬT TOÁN (Sticky Bottom) */}
+        <div className="absolute bottom-0 left-0 w-full p-4 border-t border-gray-200 bg-white/90 backdrop-blur-sm shrink-0 z-20">
           <button onClick={runSmartPacking} className="w-full bg-slate-900 hover:bg-black text-white py-3.5 rounded-lg font-bold shadow-lg shadow-slate-900/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
-            <Play size={18} fill="currentColor"/> BẮT ĐẦU XẾP HÀNG
+            <Play size={18} fill="currentColor"/> XẾP SƠ ĐỒ MỚI
           </button>
         </div>
       </div>
-
-      {/* --- MODAL NHẬP TRỰC TIẾP FILE EXCEL --- */}
-      {isExcelModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fadeIn backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col">
-             <div className="bg-green-700 p-4 text-white flex justify-between items-center">
-               <h3 className="font-bold flex items-center gap-2"><FileSpreadsheet size={18}/> Nhập dữ liệu từ File Excel</h3>
-               <button onClick={() => setIsExcelModalOpen(false)} className="text-green-200 hover:text-white"><XCircle size={20}/></button>
-             </div>
-             
-             <div className="p-5 space-y-5 overflow-y-auto max-h-[70vh] custom-scrollbar">
-                
-                {/* Khu vực Upload */}
-                {!excelState.file ? (
-                  <div className="border-2 border-dashed border-green-300 bg-green-50 rounded-xl p-8 flex flex-col items-center justify-center relative hover:bg-green-100 transition-colors cursor-pointer">
-                    <input 
-                      type="file" 
-                      accept=".xlsx, .xls, .csv" 
-                      onChange={handleFileUpload} 
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <UploadCloud size={48} className="text-green-500 mb-3"/>
-                    <p className="font-bold text-green-800 text-center">Bấm vào đây để chọn File<br/>hoặc Kéo thả file Excel vào khu vực này</p>
-                    <p className="text-xs text-green-600 mt-2">Hỗ trợ: .xlsx, .xls, .csv</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                     <div className="flex items-center justify-between bg-green-50 border border-green-200 p-3 rounded">
-                        <div className="flex items-center gap-2">
-                           <FileSpreadsheet className="text-green-600" size={20}/>
-                           <span className="font-bold text-sm text-green-800 truncate max-w-[200px]">{excelState.file.name}</span>
-                        </div>
-                        <button onClick={() => setExcelState({ file: null, workbook: null, sheets: [], selectedSheet: '', headers: [], data: [], mapping: { name: '', quantity: '', unit: '', itemsPerBox: '' }})} className="text-xs text-red-600 hover:underline">Hủy File</button>
-                     </div>
-
-                     {/* Chọn Sheet */}
-                     {excelState.sheets.length > 0 && (
-                       <div>
-                         <label className="block text-xs font-bold text-gray-500 mb-1">1. Chọn Sheet dữ liệu</label>
-                         <select 
-                           value={excelState.selectedSheet} 
-                           onChange={(e) => setExcelState({...excelState, selectedSheet: e.target.value})}
-                           className="w-full p-2 border rounded font-bold text-sm bg-white"
-                         >
-                           {excelState.sheets.map(s => <option key={s} value={s}>{s}</option>)}
-                         </select>
-                       </div>
-                     )}
-
-                     {/* Mapping Header tự động */}
-                     {excelState.headers.length > 0 && (
-                       <div className="bg-gray-50 p-4 rounded border">
-                         <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center gap-2">
-                            <TableProperties size={14} className="text-blue-500"/>
-                            2. Kiểm tra & Ghép Cột (AI Tự nhận diện)
-                         </h4>
-                         <p className="text-[10px] text-gray-500 mb-3">Nếu AI nhận sai cột, vui lòng bấm vào Dropdown để chọn lại cột chính xác từ file Excel.</p>
-                         
-                         <div className="grid grid-cols-2 gap-4">
-                            <div>
-                               <label className="text-[10px] font-bold text-red-500 uppercase">* Cột Tên Lô / Mã</label>
-                               <select 
-                                 value={excelState.mapping.name} 
-                                 onChange={(e) => setExcelState(p => ({...p, mapping: {...p.mapping, name: e.target.value}}))}
-                                 className={`w-full p-1.5 border rounded text-xs ${excelState.mapping.name ? 'border-green-400 bg-green-50' : 'border-red-400 bg-red-50'}`}
-                               >
-                                 <option value="">-- Chọn cột --</option>
-                                 {excelState.headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
-                               </select>
-                            </div>
-                            <div>
-                               <label className="text-[10px] font-bold text-red-500 uppercase">* Cột Số Lượng</label>
-                               <select 
-                                 value={excelState.mapping.quantity} 
-                                 onChange={(e) => setExcelState(p => ({...p, mapping: {...p.mapping, quantity: e.target.value}}))}
-                                 className={`w-full p-1.5 border rounded text-xs ${excelState.mapping.quantity ? 'border-green-400 bg-green-50' : 'border-red-400 bg-red-50'}`}
-                               >
-                                 <option value="">-- Chọn cột --</option>
-                                 {excelState.headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
-                               </select>
-                            </div>
-                            <div>
-                               <label className="text-[10px] font-bold text-gray-500 uppercase">Cột Đơn vị tính</label>
-                               <select 
-                                 value={excelState.mapping.unit} 
-                                 onChange={(e) => setExcelState(p => ({...p, mapping: {...p.mapping, unit: e.target.value}}))}
-                                 className="w-full p-1.5 border rounded text-xs bg-white"
-                               >
-                                 <option value="">(Bỏ qua - Mặc định)</option>
-                                 {excelState.headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
-                               </select>
-                            </div>
-                            <div>
-                               <label className="text-[10px] font-bold text-gray-500 uppercase">Cột Quy Cách (Item/Hòm)</label>
-                               <select 
-                                 value={excelState.mapping.itemsPerBox} 
-                                 onChange={(e) => setExcelState(p => ({...p, mapping: {...p.mapping, itemsPerBox: e.target.value}}))}
-                                 className="w-full p-1.5 border rounded text-xs bg-white"
-                               >
-                                 <option value="">(Bỏ qua - Lấy ở Cài đặt)</option>
-                                 {excelState.headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
-                               </select>
-                            </div>
-                         </div>
-                       </div>
-                     )}
-
-                     {/* Preview Data */}
-                     {excelState.data.length > 0 && (
-                        <div className="text-xs">
-                           <span className="font-bold text-gray-700">Hiển thị mẫu 3 dòng đầu:</span>
-                           <div className="mt-2 border rounded overflow-hidden">
-                             <table className="w-full text-left bg-white">
-                               <thead className="bg-gray-100 border-b">
-                                 <tr>
-                                   {Object.keys(excelState.mapping).map((key, idx) => {
-                                      if(!excelState.mapping[key]) return null;
-                                      return <th key={idx} className="p-2 font-bold">{excelState.mapping[key]}</th>
-                                   })}
-                                 </tr>
-                               </thead>
-                               <tbody>
-                                 {excelState.data.slice(0,3).map((row, rIdx) => (
-                                   <tr key={rIdx} className="border-b last:border-0">
-                                     {Object.keys(excelState.mapping).map((key, cIdx) => {
-                                        if(!excelState.mapping[key]) return null;
-                                        const hIdx = excelState.headers.indexOf(excelState.mapping[key]);
-                                        return <td key={cIdx} className="p-2">{row[hIdx] !== undefined ? row[hIdx].toString() : '-'}</td>
-                                     })}
-                                   </tr>
-                                 ))}
-                               </tbody>
-                             </table>
-                           </div>
-                           <p className="text-[10px] text-gray-400 mt-2 text-right">Tổng cộng: {excelState.data.length} dòng dữ liệu</p>
-                        </div>
-                     )}
-                  </div>
-                )}
-             </div>
-
-             <div className="p-4 bg-gray-50 border-t flex justify-end gap-3">
-                <button onClick={() => setIsExcelModalOpen(false)} className="text-gray-600 font-bold text-sm px-4 py-2 hover:bg-gray-200 rounded transition-colors">Đóng</button>
-                <button 
-                  onClick={processExcelImport} 
-                  disabled={!excelState.file}
-                  className={`font-bold text-sm px-6 py-2 rounded shadow transition-colors ${excelState.file ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
-                >
-                  Xác nhận Nạp Lô
-                </button>
-             </div>
-          </div>
-        </div>
-      )}
 
       {/* --- MODAL CHỈNH SỬA LÔ --- */}
       {editingBatch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fadeIn backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
              <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
-               <h3 className="font-bold">Cài đặt Chi tiết Lô</h3>
+               <h3 className="font-bold">Cài đặt Lô</h3>
                <button onClick={() => setEditingBatch(null)} className="text-gray-400 hover:text-white"><XCircle size={20}/></button>
              </div>
              
              <div className="p-5 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1">Tên Lô / Mã Lô</label>
-                  <input type="text" className="w-full p-2 border rounded bg-gray-50 font-bold" value={editingBatch.name} onChange={e => setEditingBatch({...editingBatch, name: e.target.value})} />
-                </div>
-                
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Tên Lô / Mã Lô</label>
+                    <input type="text" className="w-full p-2 border rounded bg-gray-50 font-bold" value={editingBatch.name} onChange={e => setEditingBatch({...editingBatch, name: e.target.value})} />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Loại / Nhóm Lô (Category)</label>
+                    <div className="flex gap-2">
+                      <select value={editingBatch.category} onChange={e => setEditingBatch({...editingBatch, category: e.target.value})} className="flex-1 p-2 border rounded font-bold text-sm bg-emerald-50 text-emerald-800 border-emerald-200">
+                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Tổng số lượng</label>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Tổng SL</label>
                     <input type="number" className="w-full p-2 border rounded font-bold text-blue-700 bg-blue-50" value={editingBatch.totalItems} onChange={e => setEditingBatch({...editingBatch, totalItems: Number(e.target.value)})} />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">Đơn vị (thân, cái)</label>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Đơn vị</label>
                     <input type="text" className="w-full p-2 border rounded" value={editingBatch.unit} onChange={e => setEditingBatch({...editingBatch, unit: e.target.value})} />
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
                    <div>
-                     <label className="block text-xs font-bold text-gray-500 mb-1">Quy cách (Item/Hòm)</label>
+                     <label className="block text-xs font-bold text-gray-500 mb-1">Quy cách (SL/Hòm)</label>
                      <input type="number" className="w-full p-2 border rounded" value={editingBatch.itemsPerBox} onChange={e => setEditingBatch({...editingBatch, itemsPerBox: Number(e.target.value)})} />
                    </div>
                    <div>
-                     <label className="block text-xs font-bold text-gray-500 mb-1">Nhóm ưu tiên</label>
+                     <label className="block text-xs font-bold text-gray-500 mb-1">Tầng xếp (Đáy/Nóc)</label>
                      <select value={editingBatch.priority} onChange={e => setEditingBatch({...editingBatch, priority: e.target.value})} className={`w-full p-2 border rounded text-xs font-bold ${PRIORITIES[editingBatch.priority].bg} ${PRIORITIES[editingBatch.priority].text}`}>
                        <option value="HARD">Đáy (Bắt buộc)</option>
                        <option value="SOFT">Giữa (Ưu tiên)</option>
@@ -797,7 +604,7 @@ export default function SmartPackingApp() {
              </div>
 
              <div className="p-4 bg-gray-50 border-t flex justify-between">
-                <button onClick={() => removeBatch(editingBatch.id)} className="text-red-600 font-bold text-sm px-4 py-2 hover:bg-red-50 rounded transition-colors">Xóa Lô</button>
+                <button onClick={() => removeBatch(editingBatch.id)} className="text-red-600 font-bold text-sm px-4 py-2 hover:bg-red-50 rounded transition-colors">Xóa</button>
                 <div className="flex gap-2">
                   <button onClick={() => setEditingBatch(null)} className="text-gray-600 font-bold text-sm px-4 py-2 hover:bg-gray-200 rounded transition-colors">Hủy</button>
                   <button onClick={saveEditedBatch} className="bg-blue-600 text-white font-bold text-sm px-6 py-2 hover:bg-blue-700 rounded shadow transition-colors">Lưu lại</button>
@@ -808,19 +615,21 @@ export default function SmartPackingApp() {
       )}
 
       {/* --- KHU VỰC TRUNG TÂM (CANVAS) --- */}
-      <div className="flex-1 relative flex flex-col bg-[#e5e7eb] overflow-hidden">
+      <div className="flex-1 relative flex flex-col bg-[#e5e7eb] overflow-hidden" onTouchMove={handlePointerMove}>
         
+        {/* NÚT CHUYỂN ĐỔI VIEW 2D/3D */}
         {isPacked && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white rounded-full shadow-md p-1 flex items-center gap-1 z-30">
             <button onClick={() => setViewMode('2D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '2D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
-               <LayoutGrid size={14}/> Bản vẽ 2D
+               <LayoutGrid size={14}/> 2D
             </button>
             <button onClick={() => setViewMode('3D')} className={`px-4 py-1.5 rounded-full text-xs font-bold flex gap-2 items-center transition-colors ${viewMode === '3D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
-               <Box size={14}/> Thực tế 3D (Xoay 360°)
+               <Box size={14}/> 3D 360°
             </button>
           </div>
         )}
 
+        {/* THÔNG BÁO TRÀN KHO */}
         {overflowBoxes.length > 0 && (
           <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-100 text-red-800 px-4 py-2 rounded-md text-xs font-bold border border-red-300 flex items-center gap-2 shadow-lg z-30">
             <AlertCircle size={16}/> Sức chứa không đủ! Còn dư {overflowBoxes.length} hòm.
@@ -831,7 +640,7 @@ export default function SmartPackingApp() {
           
           {/* ======== CHẾ ĐỘ 2D ======== */}
           {viewMode === '2D' && isPacked && (
-            <div className="flex justify-center min-w-max min-h-max mt-16 md:mt-0 pb-10">
+            <div className="flex justify-center min-w-max min-h-max mt-16 md:mt-0 pb-[100px]">
               <div className="bg-white p-8 shadow-2xl relative inline-block transition-all duration-300">
                  <div className="flex justify-between items-end mb-4 border-b-2 border-black pb-2">
                    <div>
@@ -874,12 +683,7 @@ export default function SmartPackingApp() {
                              return (
                                <div 
                                  key={`${rIdx}-${cIdx}`}
-                                 draggable={cell.stack.length > 0}
-                                 onDragStart={(e) => handleDragStartGrid(e, rIdx, cIdx)}
-                                 onDragEnd={handleDragEndGrid}
-                                 onDragOver={handleDragOverGrid}
-                                 onDrop={(e) => handleDropGrid(e, rIdx, cIdx)}
-                                 className={`w-[120px] h-[80px] relative bg-white flex flex-col ${borderClasses} cursor-move group transition-all duration-300 ${groups.length > 0 ? 'hover:bg-slate-50 hover:z-20 hover:shadow-lg' : ''}`}
+                                 className={`w-[120px] h-[80px] relative bg-white flex flex-col ${borderClasses} cursor-pointer group transition-all duration-300 ${groups.length > 0 ? 'hover:bg-slate-50 hover:z-20 hover:shadow-lg' : ''}`}
                                >
                                   {groups.length === 0 && (
                                     <div className="absolute inset-0 flex items-center justify-center opacity-10">
@@ -889,7 +693,7 @@ export default function SmartPackingApp() {
                                   )}
 
                                   {groups.length === 1 && (
-                                     <div className={`absolute inset-0 flex flex-col items-center justify-center text-center p-1 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
+                                     <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 flex flex-col items-center justify-center text-center p-1 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
                                         <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[groups[0].colorIdx].main }}></div>
                                         <div className="relative z-10 flex flex-col items-center">
                                            <div className="font-bold text-[12px] text-gray-900 leading-tight">{groups[0].name}</div>
@@ -903,7 +707,7 @@ export default function SmartPackingApp() {
 
                                   {groups.length === 2 && (
                                      <div className="absolute inset-0 overflow-hidden">
-                                        <div className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
+                                        <div onClick={() => handleBoxClick(groups[0].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[0].id)}`}>
                                           <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, transparent 49.5%, black 49.5%, black 50.5%, ${BATCH_COLORS[groups[0].colorIdx].main}20 50.5%)` }}></div>
                                           <div className="absolute top-1 right-2 text-right"><div className="text-[9px] font-bold text-gray-700">{groups[0].name}</div></div>
                                           <div className={`absolute top-3 right-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[0].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
@@ -911,8 +715,7 @@ export default function SmartPackingApp() {
                                              {groups[0].hasPartial && <span className="text-[5px] leading-[5px] uppercase">Lẻ</span>}
                                           </div>
                                         </div>
-
-                                        <div className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[1].id)}`}>
+                                        <div onClick={() => handleBoxClick(groups[1].id)} className={`absolute inset-0 transition-opacity duration-300 ${getGroupOpacity(groups[1].id)}`}>
                                           <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(to top right, ${BATCH_COLORS[groups[1].colorIdx].main}20 49.5%, transparent 49.5%)` }}></div>
                                           <div className="absolute bottom-0.5 left-2 text-left"><div className="text-[9px] font-bold text-gray-700">{groups[1].name}</div></div>
                                           <div className={`absolute bottom-3 left-1 w-6 h-6 rounded-full border flex flex-col items-center justify-center text-[9px] font-black z-10 shadow-sm ${groups[1].hasPartial ? 'border-red-500 bg-red-50 text-red-700' : 'border-black bg-white'}`}>
@@ -924,7 +727,7 @@ export default function SmartPackingApp() {
                                   )}
 
                                   {groups.length > 2 && groups.map((grp, gIdx) => (
-                                    <div key={gIdx} className={`flex-1 w-full flex flex-col items-center justify-center text-center border-b border-dashed border-gray-300 last:border-0 relative transition-opacity ${getGroupOpacity(grp.id)}`} style={{ flexGrow: grp.count }}>
+                                    <div key={gIdx} onClick={() => handleBoxClick(grp.id)} className={`flex-1 w-full flex flex-col items-center justify-center text-center border-b border-dashed border-gray-300 last:border-0 relative transition-opacity ${getGroupOpacity(grp.id)}`} style={{ flexGrow: grp.count }}>
                                       <div className="absolute inset-0 opacity-10" style={{ backgroundColor: BATCH_COLORS[grp.colorIdx].main }}></div>
                                       <div className="relative z-10 flex items-center gap-1">
                                         <div className="font-bold text-[8px] text-gray-900">{grp.name}</div>
@@ -949,17 +752,15 @@ export default function SmartPackingApp() {
             </div>
           )}
 
-          {/* ======== CHẾ ĐỘ 3D XOAY 360 (FULL 6 MẶT) ======== */}
+          {/* ======== CHẾ ĐỘ 3D ======== */}
           {viewMode === '3D' && isPacked && (
             <div 
-               className="w-full h-full min-h-[600px] flex items-center justify-center perspective-container cursor-move touch-none"
+               className="w-full h-full min-h-[600px] flex items-center justify-center perspective-container touch-none pb-[100px]"
                onMouseDown={handlePointerDown}
-               onMouseMove={handlePointerMove}
                onTouchStart={handlePointerDown}
-               onTouchMove={handlePointerMove}
             >
-               <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-xs font-medium backdrop-blur pointer-events-none z-10 flex items-center gap-2">
-                 <ArrowRight size={14}/> Kéo chuột để xoay khối 360°
+               <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-xs font-medium backdrop-blur pointer-events-none z-10 flex items-center gap-2 shadow-lg">
+                 <MousePointerClick size={14}/> Vuốt để xoay 360° | Bấm hòm để xem chi tiết
                </div>
 
                <div 
@@ -974,17 +775,18 @@ export default function SmartPackingApp() {
                     row.map((cell, cIdx) => 
                       cell.stack.map((box, bIdx) => {
                          const colors = BATCH_COLORS[box.colorIdx];
-                         const isHovered = hoveredBatchId === box.id;
-                         const notHoveredClass = hoveredBatchId && !isHovered ? 'opacity-20 grayscale' : 'opacity-100';
+                         const isHovered = (hoveredBatchId === box.id || selectedBatch?.id === box.id);
+                         const notHoveredClass = (hoveredBatchId || selectedBatch) && !isHovered ? 'opacity-20 grayscale' : 'opacity-100 cursor-pointer';
                          
                          return (
                            <div 
                              key={`box-${rIdx}-${cIdx}-${bIdx}`} 
+                             onClick={(e) => { e.stopPropagation(); handleBoxClick(box.id); }}
                              className={`cube ${notHoveredClass}`}
                              style={{ 
                                '--x': `${cIdx * 105}px`, 
                                '--y': `${rIdx * 65}px`, 
-                               '--z': `${bIdx * 42}px`,
+                               '--z': `${bIdx * 42}px`, 
                                transform: `translate3d(var(--x), var(--y), var(--z))` 
                              }}
                            >
@@ -1007,17 +809,52 @@ export default function SmartPackingApp() {
                </div>
             </div>
           )}
+
+          {!isPacked && (
+             <div className="h-full opacity-40 flex flex-col items-center justify-center text-gray-500">
+               <LayoutGrid size={80} className="mb-4"/>
+               <p className="font-medium text-lg">Chưa có dữ liệu sơ đồ</p>
+               <p className="text-sm mt-2 text-center max-w-sm">Cấu hình lô và bấm nút Bắt đầu để AI tự tính toán hướng xếp.</p>
+             </div>
+          )}
         </div>
+
+        {/* --- POPUP INSPECTOR (XEM CHI TIẾT KHI CLICK VÀO LÔ) --- */}
+        {selectedBatch && (
+          <div className="absolute bottom-0 left-0 w-full bg-white border-t-4 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] p-4 z-50 animate-fadeIn batch-inspector flex justify-between items-center" style={{ borderColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
+            <div className="flex gap-4 items-center">
+               <div className="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold shadow-md" style={{ backgroundColor: BATCH_COLORS[selectedBatch.colorIdx].main }}>
+                  {selectedBatch.name.substring(0, 3)}
+               </div>
+               <div>
+                  <h3 className="font-black text-lg text-gray-900 leading-none mb-1">{selectedBatch.name}</h3>
+                  <div className="flex items-center gap-2">
+                     <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">{selectedBatch.category}</span>
+                     <span className="text-xs font-bold text-gray-500">{selectedBatch.totalItems} {selectedBatch.unit}</span>
+                     <span className="text-xs text-gray-400">({selectedBatch.itemsPerBox} {selectedBatch.unit}/hòm)</span>
+                  </div>
+               </div>
+            </div>
+            <div className="flex gap-4 items-center">
+               <div className="text-right border-r pr-4 mr-4 hidden md:block">
+                  <div className="text-xs text-gray-500 uppercase font-bold">Phân bổ</div>
+                  <div className="font-black text-sm text-gray-800">{getBreakdownText(selectedBatch.totalItems, selectedBatch.itemsPerBox, selectedBatch.unit)}</div>
+               </div>
+               <button onClick={() => { setSelectedBatch(null); setHoveredBatchId(null); }} className="text-gray-400 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-colors"><X size={20}/></button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadeIn { animation: fadeIn 0.2s ease-out forwards; }
         
-        /* 3D Styles - KHỐI CHỮ NHẬT W=100, D=60, H=40 */
+        /* 3D Styles - KHỐI CHỮ NHẬT W=100, D=60, H=40 CÓ FULL 6 MẶT */
         .perspective-container { perspective: 2500px; overflow: hidden; }
         .isometric-grid {
            position: relative; transform-style: preserve-3d;
@@ -1035,12 +872,10 @@ export default function SmartPackingApp() {
            position: absolute; width: 100px; height: 60px; transform-style: preserve-3d;
            transition: transform 0.2s ease-out, opacity 0.3s ease;
         }
-        .cube:hover {
-           transform: translate3d(var(--x), var(--y), calc(var(--z) + 15px)) !important;
-           cursor: pointer; z-index: 100; opacity: 1 !important; filter: none !important;
-        }
+        .cube:hover { transform: translate3d(var(--x), var(--y), calc(var(--z) + 5px)) !important; }
         .face { position: absolute; box-sizing: border-box; border: 1px solid rgba(0,0,0,0.15); }
         
+        /* Cấu trúc 6 mặt của khối 100 x 60 x 40 */
         .bottom { width: 100px; height: 60px; transform: translateZ(0); }
         .top    { width: 100px; height: 60px; transform: translateZ(40px); }
         .back   { width: 100px; height: 40px; transform-origin: top left; transform: translate3d(0, 0, 40px) rotateX(-90deg); }
