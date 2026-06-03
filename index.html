@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, FileSpreadsheet, UploadCloud, TableProperties } from 'lucide-react';
+import { LayoutGrid, Play, AlertCircle, Menu, X, GripHorizontal, Box, Layers, GripVertical, Plus, Settings, XCircle, ArrowRight, ArrowLeft, ArrowDown, CheckSquare, Square, Info, Activity, FileSpreadsheet, UploadCloud, TableProperties, RefreshCw } from 'lucide-react';
 
 // --- HẰNG SỐ & MÀU SẮC ---
 const PRIORITIES = {
@@ -437,8 +437,8 @@ export default function SmartPackingApp() {
           <div className="flex items-center gap-3">
             <Layers className="text-emerald-400" />
             <div>
-              <h1 className="font-bold text-lg leading-tight">WMS Optimizer V12</h1>
-              <p className="text-[10px] text-slate-400">Direct Excel File Import & Auto-Map</p>
+              <h1 className="font-bold text-lg leading-tight">WMS Optimizer V13</h1>
+              <p className="text-[10px] text-slate-400">Settings & Auto-Refresh</p>
             </div>
           </div>
           <button className="md:hidden text-gray-400" onClick={() => setIsSidebarOpen(false)}><X size={20}/></button>
@@ -446,14 +446,23 @@ export default function SmartPackingApp() {
 
         <div className="flex border-b shrink-0 bg-gray-50">
           <button onClick={() => setActiveTab('batches')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'batches' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Danh sách Lô</button>
-          <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Thuật toán</button>
+          <button onClick={() => setActiveTab('config')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'config' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}>Cài đặt & Thuật toán</button>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar relative bg-gray-50/30">
           
           {/* TAB CẤU HÌNH */}
           {activeTab === 'config' && (
-            <div className="p-4 space-y-5 animate-fadeIn">
+            <div className="p-4 space-y-4 animate-fadeIn">
+              
+              {/* NÚT LƯU & CẬP NHẬT NHANH */}
+              <button 
+                onClick={runSmartPacking} 
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-bold shadow-md flex items-center justify-center gap-2 transition-transform active:scale-95"
+              >
+                <RefreshCw size={16}/> Cập nhật sơ đồ mới
+              </button>
+
               <div className="bg-white p-3 rounded border shadow-sm">
                 <h3 className="text-xs font-bold text-gray-800 uppercase mb-3 border-b pb-1">📐 Kích thước mặt sàn</h3>
                 <div className="grid grid-cols-2 gap-3">
